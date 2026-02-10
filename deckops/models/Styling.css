@@ -1,0 +1,980 @@
+.card {
+	font-family: arial;
+	font-size: 20px;
+	text-align: center;
+	color: black;
+	background-color: #d3d3d3;
+}
+
+.night-mode .card {
+	color: white;
+}
+
+.cloze,
+.colored-answer-text {
+	font-weight: bold;
+	color: blue;
+}
+
+.nightMode .cloze,
+.mobile .night_mode .cloze,
+.nightMode .colored-answer-text,
+.mobile .night_mode .colored-answer-text {
+	color: lightblue;
+}
+
+.nightMode a,
+.mobile .night_mode a {
+	color: #cfffe5;
+}
+
+body ul,
+body ol,
+body dl {
+	text-align: left;
+	display: inline-block;
+	margin: 0;
+}
+
+/* Fix nested lists to display as block elements */
+body ul ul,
+body ul ol,
+body ol ul,
+body ol ol {
+	display: block;
+}
+
+/* Blockquotes */
+blockquote {
+	border-left: 4px solid #999;
+	padding: 0 0 0 12px;
+	margin: 10px 0;
+	text-align: left;
+	display: inline-block;
+	max-width: 80%;
+}
+
+.night-mode blockquote {
+	border-left-color: #666;
+}
+
+.mobile blockquote {
+	max-width: 95%;
+}
+
+.mobile .night_mode blockquote {
+	border-left-color: #555;
+}
+
+.more {
+	padding: 6px 40px;
+	text-align: center;
+	text-decoration: none;
+	display: inline-block;
+	border-radius: 6px;
+	background-color: white;
+	color: black;
+	border: 1px solid black;
+	cursor: pointer;
+}
+
+/* Specific styling for the 'More' button */
+.more-button {
+	padding: 6px 40px;
+	/* Retains original button styling */
+}
+
+/* Adjusted styling for the content that appears after clicking 'More' */
+.more-content {
+	padding: 6px 40px;
+	/* Match padding with button */
+	background-color: #f5f5f5;
+	/* Different background for visibility, adjust as needed */
+	border: 1px solid black;
+	cursor: default;
+}
+
+#more_back {
+	color: inherit;
+	font-family: inherit;
+	font-size: inherit;
+	text-align: center;
+}
+
+.mobile .night_mode #more_back {
+	color: white;
+}
+
+
+.night-mode #more_back {
+	color: white;
+	background-color: #333;
+
+}
+
+.mobile .night_mode .more,
+.mobile .night_mode .more:hover {
+	color: white;
+	background-color: #333;
+	/* Dark background for night mode in mobile */
+}
+
+/* Highlight (==text==) */
+mark {
+	background: none;
+	color: #ff0000;
+}
+
+.night-mode mark {
+	color: #ff6666;
+}
+
+.mobile .night_mode mark {
+	color: #ff6666;
+}
+
+/* Inline code */
+code {
+	font-family: menlo, consolas, monospace;
+	background-color: #eee;
+	padding: 0.5px 6px;
+	border-radius: 4px;
+}
+
+.night-mode code {
+	background-color: #444;
+}
+
+.mobile .night_mode code {
+	background-color: #333;
+}
+
+/* Code blocks */
+pre {
+	display: inline-block;
+	background-color: #f6f8fa;
+	padding: 16px;
+	border-radius: 6px;
+	border: 1px solid #e1e4e8;
+	overflow: auto;
+	max-width: 90%;
+	text-align: left;
+}
+
+pre code {
+	font-family: menlo, consolas, monospace;
+	font-size: 20px;
+	color: #24292e;
+	background-color: transparent;
+	padding: 0;
+	border-radius: 0;
+}
+
+.night-mode pre {
+	background-color: #0d1117;
+	border-color: #30363d;
+}
+
+.night-mode pre code {
+	color: #c9d1d9;
+	background-color: transparent;
+}
+
+.mobile .night_mode pre {
+	background-color: #0d1117;
+	border-color: #30363d;
+}
+
+.mobile .night_mode pre code {
+	color: #c9d1d9;
+	background-color: transparent;
+}
+
+/* Tables - markdown style */
+table {
+	border-collapse: collapse;
+	margin: 10px auto;
+	text-align: left;
+}
+
+th,
+td {
+	border: 1px solid #999;
+	padding: 6px 12px;
+}
+
+th {
+	background-color: #e8e8e8;
+	font-weight: bold;
+}
+
+.night-mode th {
+	background-color: #444;
+}
+
+.night-mode th,
+.night-mode td {
+	border-color: #666;
+}
+
+.mobile .night_mode th {
+	background-color: #333;
+}
+
+.mobile .night_mode th,
+.mobile .night_mode td {
+	border-color: #555;
+}
+
+/* Syntax highlighting - light (default) - GitHub style */
+pre code .hll {
+	background-color: #f6e8b3
+}
+
+/* Comment */
+pre code .c,
+pre code .ch,
+pre code .cm,
+pre code .cp,
+pre code .cpf,
+pre code .c1,
+pre code .cs {
+	color: #6f42c1;
+	font-style: italic
+}
+
+/* Error */
+pre code .err {
+	color: #cb2431
+}
+
+/* Keyword */
+pre code .k,
+pre code .kc,
+pre code .kd,
+pre code .kn,
+pre code .kr,
+pre code .kt {
+	color: #d73a49;
+	font-weight: bold
+}
+
+/* Keyword.Pseudo */
+pre code .kp {
+	color: #d73a49
+}
+
+/* Operator */
+pre code .o,
+pre code .ow {
+	color: #24292e
+}
+
+/* Generic */
+pre code .g {
+	color: #24292e
+}
+
+/* Generic.Deleted */
+pre code .gd {
+	color: #b31c1c;
+	background-color: #fdeaea
+}
+
+/* Generic.Emph */
+pre code .ge {
+	font-style: italic
+}
+
+/* Generic.EmphStrong */
+pre code .ges {
+	font-weight: bold;
+	font-style: italic
+}
+
+/* Generic.Error */
+pre code .gr {
+	color: #cb2431
+}
+
+/* Generic.Heading */
+pre code .gh {
+	color: #6f42c1;
+	font-weight: bold
+}
+
+/* Generic.Inserted */
+pre code .gi {
+	color: #22863a;
+	background-color: #f0f5e3
+}
+
+/* Generic.Output */
+pre code .go {
+	color: #6a737d
+}
+
+/* Generic.Prompt */
+pre code .gp {
+	color: #6a737d;
+	font-weight: bold
+}
+
+/* Generic.Strong */
+pre code .gs {
+	font-weight: bold
+}
+
+/* Generic.Subheading */
+pre code .gu {
+	color: #6f42c1;
+	font-weight: bold
+}
+
+/* Generic.Traceback */
+pre code .gt {
+	color: #24292e
+}
+
+/* Literal.Number */
+pre code .m,
+pre code .mb,
+pre code .mf,
+pre code .mh,
+pre code .mi,
+pre code .mo,
+pre code .il {
+	color: #005cc5
+}
+
+/* Literal.String */
+pre code .s,
+pre code .sa,
+pre code .sb,
+pre code .sc,
+pre code .dl,
+pre code .sd,
+pre code .s2,
+pre code .se,
+pre code .sh,
+pre code .si,
+pre code .sx,
+pre code .sr,
+pre code .s1,
+pre code .ss {
+	color: #032f62
+}
+
+/* Name.Attribute */
+pre code .na {
+	color: #6f42c1
+}
+
+/* Name.Builtin */
+pre code .nb,
+pre code .bp {
+	color: #24292e
+}
+
+/* Name.Class */
+pre code .nc {
+	color: #6f42c1;
+	font-weight: bold
+}
+
+/* Name.Constant */
+pre code .no {
+	color: #005cc5
+}
+
+/* Name.Decorator */
+pre code .nd {
+	color: #6f42c1
+}
+
+/* Name.Entity */
+pre code .ni {
+	color: #24292e;
+	font-weight: bold
+}
+
+/* Name.Exception */
+pre code .ne {
+	color: #d73a49;
+	font-weight: bold
+}
+
+/* Name.Function */
+pre code .nf,
+pre code .fm {
+	color: #6f42c1
+}
+
+/* Name.Label */
+pre code .nl {
+	color: #24292e
+}
+
+/* Name.Namespace */
+pre code .nn {
+	color: #6f42c1;
+	font-weight: bold
+}
+
+/* Name.Other */
+pre code .nx {
+	color: #6f42c1
+}
+
+/* Name.Tag */
+pre code .nt {
+	color: #d73a49;
+	font-weight: bold
+}
+
+/* Name.Variable */
+pre code .nv,
+pre code .py,
+pre code .vc,
+pre code .vg,
+pre code .vi,
+pre code .vm {
+	color: #24292e
+}
+
+/* Punctuation */
+pre code .p,
+pre code .pm,
+pre code .w {
+	color: #24292e
+}
+
+/* Text.Whitespace */
+pre code .x {
+	color: #24292e
+}
+
+/* Literal.Date */
+pre code .ld {
+	color: #032f62
+}
+
+/* Syntax highlighting - night mode (GitHub Dark) */
+.night-mode pre code .hll {
+	background-color: #161b22
+}
+
+/* Comment */
+.night-mode pre code .c,
+.night-mode pre code .ch,
+.night-mode pre code .cm,
+.night-mode pre code .cp,
+.night-mode pre code .cpf,
+.night-mode pre code .c1,
+.night-mode pre code .cs {
+	color: #8b949e;
+	font-style: italic
+}
+
+/* Error */
+.night-mode pre code .err,
+.night-mode pre code .gr {
+	color: #f85149
+}
+
+/* Escape */
+.night-mode pre code .esc {
+	color: #c9d1d9
+}
+
+/* Generic */
+.night-mode pre code .g {
+	color: #c9d1d9
+}
+
+/* Keyword */
+.night-mode pre code .k,
+.night-mode pre code .kc,
+.night-mode pre code .kd,
+.night-mode pre code .kn,
+.night-mode pre code .kr,
+.night-mode pre code .kt {
+	color: #ff7b72;
+	font-weight: bold
+}
+
+/* Keyword.Pseudo */
+.night-mode pre code .kp {
+	color: #ff7b72
+}
+
+/* Literal */
+.night-mode pre code .l {
+	color: #79c0ff
+}
+
+/* Name */
+.night-mode pre code .n {
+	color: #c9d1d9
+}
+
+/* Operator */
+.night-mode pre code .o,
+.night-mode pre code .ow {
+	color: #ff7b72
+}
+
+/* Other */
+.night-mode pre code .x {
+	color: #c9d1d9
+}
+
+/* Punctuation */
+.night-mode pre code .p,
+.night-mode pre code .pm {
+	color: #c9d1d9
+}
+
+/* Generic.Deleted */
+.night-mode pre code .gd {
+	color: #f85149;
+	background-color: #490202
+}
+
+/* Generic.Emph */
+.night-mode pre code .ge {
+	color: #c9d1d9;
+	font-style: italic
+}
+
+/* Generic.EmphStrong */
+.night-mode pre code .ges {
+	color: #c9d1d9;
+	font-weight: bold;
+	font-style: italic
+}
+
+/* Generic.Error */
+.night-mode pre code .go {
+	color: #79c0ff
+}
+
+/* Generic.Heading */
+.night-mode pre code .gh {
+	color: #79c0ff;
+	font-weight: bold
+}
+
+/* Generic.Inserted */
+.night-mode pre code .gi {
+	color: #56d364;
+	background-color: #0f5323
+}
+
+/* Generic.Output */
+.night-mode pre code .go {
+	color: #79c0ff
+}
+
+/* Generic.Prompt */
+.night-mode pre code .gp {
+	color: #79c0ff;
+	font-weight: bold
+}
+
+/* Generic.Strong */
+.night-mode pre code .gs {
+	color: #c9d1d9;
+	font-weight: bold
+}
+
+/* Generic.Subheading */
+.night-mode pre code .gu {
+	color: #79c0ff;
+	font-weight: bold
+}
+
+/* Generic.Traceback */
+.night-mode pre code .gt {
+	color: #c9d1d9
+}
+
+/* Literal.Date */
+.night-mode pre code .ld {
+	color: #79c0ff
+}
+
+/* Literal.Number */
+.night-mode pre code .m,
+.night-mode pre code .mb,
+.night-mode pre code .mf,
+.night-mode pre code .mh,
+.night-mode pre code .mi,
+.night-mode pre code .mo,
+.night-mode pre code .il {
+	color: #79c0ff
+}
+
+/* Literal.String */
+.night-mode pre code .s,
+.night-mode pre code .sa,
+.night-mode pre code .sb,
+.night-mode pre code .sc,
+.night-mode pre code .dl,
+.night-mode pre code .sd,
+.night-mode pre code .s2,
+.night-mode pre code .se,
+.night-mode pre code .sh,
+.night-mode pre code .si,
+.night-mode pre code .sx,
+.night-mode pre code .sr,
+.night-mode pre code .s1,
+.night-mode pre code .ss {
+	color: #a5d6ff
+}
+
+/* Name.Attribute */
+.night-mode pre code .na {
+	color: #79c0ff
+}
+
+/* Name.Builtin */
+.night-mode pre code .nb,
+.night-mode pre code .bp {
+	color: #c9d1d9
+}
+
+/* Name.Class */
+.night-mode pre code .nc {
+	color: #f0883e;
+	font-weight: bold
+}
+
+/* Name.Constant */
+.night-mode pre code .no {
+	color: #79c0ff
+}
+
+/* Name.Decorator */
+.night-mode pre code .nd {
+	color: #d2a8ff
+}
+
+/* Name.Entity */
+.night-mode pre code .ni {
+	color: #c9d1d9;
+	font-weight: bold
+}
+
+/* Name.Exception */
+.night-mode pre code .ne {
+	color: #f0883e;
+	font-weight: bold
+}
+
+/* Name.Function */
+.night-mode pre code .nf,
+.night-mode pre code .fm {
+	color: #d2a8ff
+}
+
+/* Name.Label */
+.night-mode pre code .nl {
+	color: #c9d1d9
+}
+
+/* Name.Namespace */
+.night-mode pre code .nn {
+	color: #ff7b72;
+	font-weight: bold
+}
+
+/* Name.Other */
+.night-mode pre code .nx {
+	color: #d2a8ff
+}
+
+/* Name.Property */
+.night-mode pre code .py {
+	color: #c9d1d9
+}
+
+/* Name.Tag */
+.night-mode pre code .nt {
+	color: #7ee787;
+	font-weight: bold
+}
+
+/* Name.Variable */
+.night-mode pre code .nv,
+.night-mode pre code .vc,
+.night-mode pre code .vg,
+.night-mode pre code .vi,
+.night-mode pre code .vm {
+	color: #c9d1d9
+}
+
+/* Text.Whitespace */
+.night-mode pre code .w {
+	color: #c9d1d9
+}
+
+/* Syntax highlighting - mobile night mode (GitHub Dark) */
+.mobile .night_mode pre code .hll {
+	background-color: #161b22
+}
+
+/* Comment */
+.mobile .night_mode pre code .c,
+.mobile .night_mode pre code .ch,
+.mobile .night_mode pre code .cm,
+.mobile .night_mode pre code .cp,
+.mobile .night_mode pre code .cpf,
+.mobile .night_mode pre code .c1,
+.mobile .night_mode pre code .cs {
+	color: #8b949e;
+	font-style: italic
+}
+
+/* Error */
+.mobile .night_mode pre code .err,
+.mobile .night_mode pre code .gr {
+	color: #f85149
+}
+
+/* Escape */
+.mobile .night_mode pre code .esc {
+	color: #c9d1d9
+}
+
+/* Generic */
+.mobile .night_mode pre code .g {
+	color: #c9d1d9
+}
+
+/* Keyword */
+.mobile .night_mode pre code .k,
+.mobile .night_mode pre code .kc,
+.mobile .night_mode pre code .kd,
+.mobile .night_mode pre code .kn,
+.mobile .night_mode pre code .kr,
+.mobile .night_mode pre code .kt {
+	color: #ff7b72;
+	font-weight: bold
+}
+
+/* Keyword.Pseudo */
+.mobile .night_mode pre code .kp {
+	color: #ff7b72
+}
+
+/* Literal */
+.mobile .night_mode pre code .l {
+	color: #79c0ff
+}
+
+/* Name */
+.mobile .night_mode pre code .n {
+	color: #c9d1d9
+}
+
+/* Operator */
+.mobile .night_mode pre code .o,
+.mobile .night_mode pre code .ow {
+	color: #ff7b72
+}
+
+/* Other */
+.mobile .night_mode pre code .x {
+	color: #c9d1d9
+}
+
+/* Punctuation */
+.mobile .night_mode pre code .p,
+.mobile .night_mode pre code .pm {
+	color: #c9d1d9
+}
+
+/* Generic.Deleted */
+.mobile .night_mode pre code .gd {
+	color: #f85149;
+	background-color: #490202
+}
+
+/* Generic.Emph */
+.mobile .night_mode pre code .ge {
+	color: #c9d1d9;
+	font-style: italic
+}
+
+/* Generic.EmphStrong */
+.mobile .night_mode pre code .ges {
+	color: #c9d1d9;
+	font-weight: bold;
+	font-style: italic
+}
+
+/* Generic.Error */
+.mobile .night_mode pre code .go {
+	color: #79c0ff
+}
+
+/* Generic.Heading */
+.mobile .night_mode pre code .gh {
+	color: #79c0ff;
+	font-weight: bold
+}
+
+/* Generic.Inserted */
+.mobile .night_mode pre code .gi {
+	color: #56d364;
+	background-color: #0f5323
+}
+
+/* Generic.Output */
+.mobile .night_mode pre code .go {
+	color: #79c0ff
+}
+
+/* Generic.Prompt */
+.mobile .night_mode pre code .gp {
+	color: #79c0ff;
+	font-weight: bold
+}
+
+/* Generic.Strong */
+.mobile .night_mode pre code .gs {
+	color: #c9d1d9;
+	font-weight: bold
+}
+
+/* Generic.Subheading */
+.mobile .night_mode pre code .gu {
+	color: #79c0ff;
+	font-weight: bold
+}
+
+/* Generic.Traceback */
+.mobile .night_mode pre code .gt {
+	color: #c9d1d9
+}
+
+/* Literal.Date */
+.mobile .night_mode pre code .ld {
+	color: #79c0ff
+}
+
+/* Literal.Number */
+.mobile .night_mode pre code .m,
+.mobile .night_mode pre code .mb,
+.mobile .night_mode pre code .mf,
+.mobile .night_mode pre code .mh,
+.mobile .night_mode pre code .mi,
+.mobile .night_mode pre code .mo,
+.mobile .night_mode pre code .il {
+	color: #79c0ff
+}
+
+/* Literal.String */
+.mobile .night_mode pre code .s,
+.mobile .night_mode pre code .sa,
+.mobile .night_mode pre code .sb,
+.mobile .night_mode pre code .sc,
+.mobile .night_mode pre code .dl,
+.mobile .night_mode pre code .sd,
+.mobile .night_mode pre code .s2,
+.mobile .night_mode pre code .se,
+.mobile .night_mode pre code .sh,
+.mobile .night_mode pre code .si,
+.mobile .night_mode pre code .sx,
+.mobile .night_mode pre code .sr,
+.mobile .night_mode pre code .s1,
+.mobile .night_mode pre code .ss {
+	color: #a5d6ff
+}
+
+/* Name.Attribute */
+.mobile .night_mode pre code .na {
+	color: #79c0ff
+}
+
+/* Name.Builtin */
+.mobile .night_mode pre code .nb,
+.mobile .night_mode pre code .bp {
+	color: #c9d1d9
+}
+
+/* Name.Class */
+.mobile .night_mode pre code .nc {
+	color: #f0883e;
+	font-weight: bold
+}
+
+/* Name.Constant */
+.mobile .night_mode pre code .no {
+	color: #79c0ff
+}
+
+/* Name.Decorator */
+.mobile .night_mode pre code .nd {
+	color: #d2a8ff
+}
+
+/* Name.Entity */
+.mobile .night_mode pre code .ni {
+	color: #c9d1d9;
+	font-weight: bold
+}
+
+/* Name.Exception */
+.mobile .night_mode pre code .ne {
+	color: #f0883e;
+	font-weight: bold
+}
+
+/* Name.Function */
+.mobile .night_mode pre code .nf,
+.mobile .night_mode pre code .fm {
+	color: #d2a8ff
+}
+
+/* Name.Label */
+.mobile .night_mode pre code .nl {
+	color: #c9d1d9
+}
+
+/* Name.Namespace */
+.mobile .night_mode pre code .nn {
+	color: #ff7b72;
+	font-weight: bold
+}
+
+/* Name.Other */
+.mobile .night_mode pre code .nx {
+	color: #d2a8ff
+}
+
+/* Name.Property */
+.mobile .night_mode pre code .py {
+	color: #c9d1d9
+}
+
+/* Name.Tag */
+.mobile .night_mode pre code .nt {
+	color: #7ee787;
+	font-weight: bold
+}
+
+/* Name.Variable */
+.mobile .night_mode pre code .nv,
+.mobile .night_mode pre code .vc,
+.mobile .night_mode pre code .vg,
+.mobile .night_mode pre code .vi,
+.mobile .night_mode pre code .vm {
+	color: #c9d1d9
+}
+
+/* Text.Whitespace */
+.mobile .night_mode pre code .w {
+	color: #c9d1d9
+}

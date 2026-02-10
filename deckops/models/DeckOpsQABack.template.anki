@@ -1,0 +1,20 @@
+{{edit:Question}}
+
+<br>
+
+<span class="colored-answer-text">{{edit:Answer}}</span>
+
+{{#Extra}}
+<hr>
+{{edit:Extra}}
+{{/Extra}}
+
+{{#More}}
+<hr>
+<div class="more more-button" href="#"
+    onclick="this.style.display='none';document.getElementById('more_back').style.display='inline-block';return false;">
+    More</div>
+<div id="more_back" class="more more-content" style="display: none">
+    <div id="more">{{More}}</div>
+</div>
+{{/More}}
