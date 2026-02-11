@@ -1,4 +1,8 @@
-![logo.png](logo.png)
+# DeckOps
+
+[![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](https://opensource.org/licenses/MIT) [![PyPI version](https://badge.fury.io/py/deckops.svg)](https://badge.fury.io/py/deckops) 
+
+**Anki decks ↔ Markdown files, in perfect sync**
 
 ## The Problem
 
@@ -6,7 +10,7 @@ Managing Anki decks through the UI can feel complex and slow. Working with decks
 
 ## The Solution
 
-DeckOps is an Anki ↔ Markdown bridge that provides this exact workflow. Each Anki deck is represented by a Markdown file, and edits in either place can be synced to the other. This enables a hybrid approach between Anki and your filesystem, allowing for faster editing and easier maintenance.
+DeckOps is an Anki ↔ Markdown bridge that provides this exact workflow. Each Anki deck is represented by a single Markdown file. Edits in either place can be synced to the other. This enables a hybrid approach between Anki and your filesystem, allowing for faster editing and easier maintenance.
 
 ## Features
 
@@ -14,33 +18,34 @@ DeckOps is an Anki ↔ Markdown bridge that provides this exact workflow. Each A
 - Markdown support with nearly all features (including syntax-highlighted code blocks, supported on desktop and mobile)
 - Built-in Git integration with autocommit for tracking all changes
 - Image support via VS Code where images are directly copied into your Anki media folder (automatically set up)
-- Support for Base Type (Q&A) and Cloze notes
-- Simple CLI interface—after initialization, only two commands are needed for daily use
+- Support for Base (Q&A) and Cloze notes
+- Simple CLI interface: after initialization, only two commands are needed for daily use
 
 ## Getting Started
 
-1. **Install DeckOps via [pipx](https://github.com/pypa/pipx)**:
+
+1. **Install DeckOps via [pipx](https://github.com/pypa/pipx)**: Pipx will make DeckOps globally available in your terminal.
 ```bash
 pipx install deckops
 ```
-2. **Initialize DeckOps**: Make sure that Anki is running, with the [AnkiConnect add-on](https://ankiweb.net/shared/info/2055492159) enabled. Initialize DeckOps in any empty directory of your choosing. This is where your text-based decks will live. The additional tutorial flag creates a sample Markdown deck with further information.
-
+2. **Initialize DeckOps**: Make sure that Anki is running, with the [AnkiConnect add-on](https://ankiweb.net/shared/info/2055492159) enabled. Initialize DeckOps in any empty directory of your choosing. This is where your text-based decks will live. The additional tutorial flag creates a sample Markdown deck.
 ```bash
 deckops init --tutorial
 ```
-
-3. **Execute DeckOps**: Import the tutorial deck into Anki. The tutorial deck provides a good starting point for exploring DeckOps features. Import it into Anki using:
+3. **Execute DeckOps**: Import the tutorial deck into Anki using:
 ```bash
 deckops ma # markdown to anki (import)
 ```
-
-4. **Keep everything in sync**: Each sync is unidirectional—the last sync direction overwrites the other (sync in the same direction per session to avoid losing edits). The CLI provides additional flags for syncing single files or decks. To export changes after reviewing and editing the tutorial in Anki, use:
-
+4. **Keep everything in sync**: When editing your Markdown files, sync Markdown → Anki (and vice versa), as each sync makes one side match the other. After reviewing and editing your cards in Anki, you can sync Anki → Markdown using the following command:
 ```bash
 deckops am # anki to markdown (export)
 ```
 
 ## FAQ
+
+### How is this different from other Markdown or Obsidian tools?
+
+Available tools are one-way importers: you write in Markdown and push to Anki, but edits in Anki don't sync back. DeckOps is *fully bidirectional*: you can edit in either Anki or Markdown and sync in both directions. Additionally, DeckOps uses a simpler one-file-per-deck structure, making your collection easier to navigate and manage.
 
 ### Is it safe to use?
 
@@ -48,7 +53,7 @@ Yes, DeckOps will never modify cards with non-DeckOps templates. Your existing c
 
 ### How do I create new cards?
 
-Create a new Markdown file in your initialized DeckOps folder. For the first import, the file name will act as the deck name. Subdecks are supported via two underscores `__` (Anki's `::` is not supported in the file system). Start by writing your cards in Markdown. For each card, you can decide whether to use the QA or cloze format. Cards must be separated by a new line, three dashes `---`, and another new line.
+Create a new Markdown file in your initialized DeckOps folder. For the first import, the file name will act as the deck name. Subdecks are supported via two underscores `__` (Anki's `::` is not supported in the file system). Start by writing your cards in Markdown. For each card, you can decide whether to use the QA or cloze format. Cards must be separated by a new line, three dashes `---`, and another new line. You can add new cards anywhere in an existing file.
 
 ```markdown
 Q: Question text here
@@ -98,6 +103,28 @@ Fork this repository and initialize the tutorial in your root folder (make sure 
 python -m main init --tutorial
 python -m main ma
 ```
+
+
+### What commands and flags are available in the CLI?
+
+**Global:**
+- `--debug` - Enable debug logging
+- `--help` - Show help message
+
+**`init`:**
+- `--no-auto-commit` - Disable automatic git commits
+- `--tutorial` - Create tutorial markdown file
+
+**`anki-to-markdown` / `am`:**
+- `--deck`, `-d` - Export single deck by name
+- `--keep-orphans` - Keep deck files/cards that no longer exist in Anki
+- `--no-auto-commit`, `-n` - Skip automatic git commit
+
+**`markdown-to-anki` / `ma`:**
+- `--file`, `-f` - Import single file
+- `--only-add-new` - Only add new cards, skip existing
+- `--no-auto-commit`, `-n` - Skip automatic git commit
+
 ---
 
 ### How does DeckOps solve bidirectional sync? (Claude's answer)
@@ -160,7 +187,7 @@ This simple approach requires discipline: always sync in the same direction for 
 - Card exists in Markdown with `card_id: 123`
 - But ID 123 no longer exists in Anki (manually deleted)
 
-**How it's resolved**:
+**How it's resolved (import)**:
 1. Phase 1: Try to update card 123 → fails
 2. Mark as "stale"
 3. Phase 3: Re-create in Anki with new ID (e.g., 456)
@@ -194,10 +221,4 @@ Deletions propagate in both directions to maintain consistency.
 
 ---
 
-## Support This Project
-
-If DeckOps saves you time or makes your workflow better, consider buying me a coffee—it would make my day!
-
 [![ko-fi](https://ko-fi.com/img/githubbutton_sm.svg)](https://ko-fi.com/visserle)
-
-MIT License

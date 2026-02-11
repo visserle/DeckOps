@@ -19,7 +19,7 @@ A: **Bold text**, *italic text*, ==highlighted text==, ~~strikethrough~~, and `i
 
 - Unordered item 1
 - Unordered item 2
-  - Nested item 1 
+  - Nested item 1
   - (also available for ordered lists)
 
 **Tables:**
@@ -42,8 +42,6 @@ def hello():
 
 \[\int_{-\infty}^{\infty} e^{-x^2} dx = \sqrt{\pi}\]
 E: *Everything renders beautifully on desktop and mobile.*
-
-M: If an image were here, you could resize it and the width would be saved in the Markdown file. 
 
 ---
 

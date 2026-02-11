@@ -184,7 +184,7 @@ def main():
 
     # Anki to Markdown (am) parser
     am_parser = subparsers.add_parser(
-        "anki_to_markdown",
+        "anki-to-markdown",
         aliases=["am"],
         help="Anki -> Markdown (export)",
     )
@@ -208,7 +208,7 @@ def main():
 
     # Markdown to Anki (ma) parser
     ma_parser = subparsers.add_parser(
-        "markdown_to_anki",
+        "markdown-to-anki",
         aliases=["ma"],
         help="Markdown -> Anki (import)",
     )
@@ -247,8 +247,8 @@ def main():
         print(
             "  init              Initialize current directory as a DeckOps collection"
         )
-        print("  anki_to_markdown  Export Anki decks to Markdown files (alias: am)")
-        print("  markdown_to_anki  Import Markdown files into Anki (alias: ma)")
+        print("  anki-to-markdown  Export Anki decks to Markdown files (alias: am)")
+        print("  markdown-to-anki  Import Markdown files into Anki (alias: ma)")
         print()
         print("Usage examples:")
         print("  deckops init --tutorial        # Initialize with tutorial")
