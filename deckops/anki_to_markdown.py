@@ -195,9 +195,19 @@ def transcribe_collection(output_dir: str = ".") -> list[DeckExportResult]:
     """Transcribe all decks in the collection to Markdown files."""
     deck_names_and_ids = invoke("deckNamesAndIds")
     relevant_decks = _find_relevant_decks()
+
+    # Don't count the "default" deck if empty (has no cards)
+    # and there are other decks in the collection
+    total_decks = len(deck_names_and_ids)
+    if total_decks > 1:
+        default_card_ids = invoke(
+            "findCards", query='deck:"default" -deck:"default::*"'
+        )
+        if not default_card_ids:
+            total_decks -= 1
+
     logger.info(
-        f"Found {len(deck_names_and_ids)} decks, "
-        f"{len(relevant_decks)} with supported note types"
+        f"Found {total_decks} decks, {len(relevant_decks)} with supported note types"
     )
 
     # Also include decks that have existing markdown files (they may
