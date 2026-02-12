@@ -1,20 +1,21 @@
-"""Tests for DeckOpsCloze support: parsing, formatting, and round-trip."""
+"""Tests for note parsing, formatting, and round-trip (both QA and Cloze)."""
 
 import pytest
 
-from deckops.config import CARD_SEPARATOR, NOTE_TYPES
+from deckops.config import NOTE_SEPARATOR, NOTE_TYPES
 from deckops.html_converter import HTMLToMarkdown
 from deckops.markdown_converter import MarkdownToHTML
 from deckops.markdown_helpers import (
-    extract_card_blocks,
-    format_card,
-    parse_card_block,
-    validate_card,
+    ParsedNote,
+    extract_note_blocks,
+    format_note,
+    parse_note_block,
+    validate_note,
 )
 
 
 class TestParseClozBlock:
-    """Test parse_card_block with DeckOpsCloze blocks."""
+    """Test parse_note_block with DeckOpsCloze blocks."""
 
     def test_cloze_with_note_id(self):
         block = (
@@ -22,29 +23,30 @@ class TestParseClozBlock:
             "T: The capital of {{c1::France}} is {{c2::Paris}}\n"
             "E: Geography fact"
         )
-        card = parse_card_block(block, 1)
-        assert card.note_id == 789
-        assert card.card_id is None
-        assert card.note_type == "DeckOpsCloze"
-        assert card.fields["Text"] == "The capital of {{c1::France}} is {{c2::Paris}}"
-        assert card.fields["Extra"] == "Geography fact"
+        parsed_note = parse_note_block(block, 1)
+        assert parsed_note.note_id == 789
+        assert parsed_note.note_type == "DeckOpsCloze"
+        assert (
+            parsed_note.fields["Text"]
+            == "The capital of {{c1::France}} is {{c2::Paris}}"
+        )
+        assert parsed_note.fields["Extra"] == "Geography fact"
 
     def test_cloze_without_id_detected_from_prefix(self):
         block = "T: This is a {{c1::cloze}} test\nE: Extra"
-        card = parse_card_block(block, 1)
-        assert card.note_id is None
-        assert card.card_id is None
-        assert card.note_type == "DeckOpsCloze"
-        assert card.fields["Text"] == "This is a {{c1::cloze}} test"
+        parsed_note = parse_note_block(block, 1)
+        assert parsed_note.note_id is None
+        assert parsed_note.note_type == "DeckOpsCloze"
+        assert parsed_note.fields["Text"] == "This is a {{c1::cloze}} test"
 
     def test_cloze_with_hint(self):
         block = (
             "<!-- note_id: 100 -->\n"
             "T: The {{c1::mitochondria::organelle}} is the powerhouse of the cell"
         )
-        card = parse_card_block(block, 1)
-        assert card.note_type == "DeckOpsCloze"
-        assert "{{c1::mitochondria::organelle}}" in card.fields["Text"]
+        parsed_note = parse_note_block(block, 1)
+        assert parsed_note.note_type == "DeckOpsCloze"
+        assert "{{c1::mitochondria::organelle}}" in parsed_note.fields["Text"]
 
     def test_cloze_multiline_text(self):
         block = (
@@ -53,50 +55,48 @@ class TestParseClozBlock:
             "Second line continues\n"
             "E: Some extra info"
         )
-        card = parse_card_block(block, 1)
-        assert card.note_type == "DeckOpsCloze"
+        parsed_note = parse_note_block(block, 1)
+        assert parsed_note.note_type == "DeckOpsCloze"
         assert (
             "First line with {{c1::cloze}}\nSecond line continues"
-            == card.fields["Text"]
+            == parsed_note.fields["Text"]
         )
 
     def test_cloze_all_fields(self):
         block = "<!-- note_id: 300 -->\nT: {{c1::Answer}}\nE: Extra\nM: More info"
-        card = parse_card_block(block, 1)
-        assert card.fields["Text"] == "{{c1::Answer}}"
-        assert card.fields["Extra"] == "Extra"
-        assert card.fields["More"] == "More info"
+        parsed_note = parse_note_block(block, 1)
+        assert parsed_note.fields["Text"] == "{{c1::Answer}}"
+        assert parsed_note.fields["Extra"] == "Extra"
+        assert parsed_note.fields["More"] == "More info"
 
     def test_cloze_text_only(self):
         block = "<!-- note_id: 400 -->\nT: Just {{c1::text}}"
-        card = parse_card_block(block, 1)
-        assert card.note_type == "DeckOpsCloze"
-        assert len(card.fields) == 1
-        assert card.fields["Text"] == "Just {{c1::text}}"
+        parsed_note = parse_note_block(block, 1)
+        assert parsed_note.note_type == "DeckOpsCloze"
+        assert len(parsed_note.fields) == 1
+        assert parsed_note.fields["Text"] == "Just {{c1::text}}"
 
 
 class TestParseQABlock:
-    """Verify DeckOpsQA still works after refactoring."""
+    """Verify DeckOpsQA parsing."""
 
-    def test_qa_with_card_id(self):
-        block = "<!-- card_id: 123 -->\nQ: What?\nA: This"
-        card = parse_card_block(block, 1)
-        assert card.card_id == 123
-        assert card.note_id is None
-        assert card.note_type == "DeckOpsQA"
-        assert card.fields["Question"] == "What?"
-        assert card.fields["Answer"] == "This"
+    def test_qa_with_note_id(self):
+        block = "<!-- note_id: 123 -->\nQ: What?\nA: This"
+        parsed_note = parse_note_block(block, 1)
+        assert parsed_note.note_id == 123
+        assert parsed_note.note_type == "DeckOpsQA"
+        assert parsed_note.fields["Question"] == "What?"
+        assert parsed_note.fields["Answer"] == "This"
 
     def test_qa_without_id(self):
         block = "Q: New question\nA: New answer"
-        card = parse_card_block(block, 1)
-        assert card.note_type == "DeckOpsQA"
-        assert card.card_id is None
-        assert card.note_id is None
+        parsed_note = parse_note_block(block, 1)
+        assert parsed_note.note_type == "DeckOpsQA"
+        assert parsed_note.note_id is None
 
 
-class TestFormatCard:
-    """Test format_card for both note types."""
+class TestFormatNote:
+    """Test format_note for both note types."""
 
     @pytest.fixture
     def converter(self):
@@ -110,7 +110,7 @@ class TestFormatCard:
                 "More": {"value": ""},
             }
         }
-        result = format_card(789, note, converter, note_type="DeckOpsCloze")
+        result = format_note(789, note, converter, note_type="DeckOpsCloze")
         assert "<!-- note_id: 789 -->" in result
         assert "T: The {{c1::answer}} is here" in result
         assert "E: Extra info" in result
@@ -125,27 +125,27 @@ class TestFormatCard:
                 "More": {"value": ""},
             }
         }
-        result = format_card(123, note, converter, note_type="DeckOpsQA")
-        assert "<!-- card_id: 123 -->" in result
+        result = format_note(123, note, converter, note_type="DeckOpsQA")
+        assert "<!-- note_id: 123 -->" in result
         assert "Q: What?" in result
         assert "A: This" in result
 
 
-class TestExtractCardBlocks:
-    """Test extract_card_blocks with mixed content."""
+class TestExtractNoteBlocks:
+    """Test extract_note_blocks with mixed content."""
 
     def test_mixed_qa_and_cloze(self):
         content = (
             "<!-- deck_id: 1 -->\n"
-            "<!-- card_id: 10 -->\n"
+            "<!-- note_id: 10 -->\n"
             "Q: Question\n"
             "A: Answer\n"
-            f"{CARD_SEPARATOR}"
+            f"{NOTE_SEPARATOR}"
             "<!-- note_id: 20 -->\n"
             "T: {{c1::Cloze}}"
         )
-        blocks = extract_card_blocks(content)
-        assert "card_id: 10" in blocks
+        blocks = extract_note_blocks(content)
+        assert "note_id: 10" in blocks
         assert "note_id: 20" in blocks
         assert len(blocks) == 2
 
@@ -154,17 +154,17 @@ class TestExtractCardBlocks:
             "<!-- deck_id: 1 -->\n"
             "<!-- note_id: 100 -->\n"
             "T: {{c1::First}}\n"
-            f"{CARD_SEPARATOR}"
+            f"{NOTE_SEPARATOR}"
             "<!-- note_id: 200 -->\n"
             "T: {{c1::Second}}"
         )
-        blocks = extract_card_blocks(content)
+        blocks = extract_note_blocks(content)
         assert "note_id: 100" in blocks
         assert "note_id: 200" in blocks
 
 
-class TestValidateCard:
-    """Test validate_card for mandatory fields and unknown prefixes."""
+class TestValidateNote:
+    """Test validate_note for mandatory fields and unknown prefixes."""
 
     def _mandatory_fields(self, note_type: str) -> list[tuple[str, str]]:
         """Return (field_name, prefix) pairs for mandatory fields of a note type."""
@@ -175,37 +175,58 @@ class TestValidateCard:
         ]
 
     def test_valid_qa_card(self):
-        block = "<!-- card_id: 1 -->\nQ: Question\nA: Answer"
-        card = parse_card_block(block, 1)
-        assert validate_card(card) == []
+        block = "<!-- note_id: 1 -->\nQ: Question\nA: Answer"
+        parsed_note = parse_note_block(block, 1)
+        assert validate_note(parsed_note) == []
 
     def test_valid_cloze_card(self):
         block = "<!-- note_id: 1 -->\nT: {{c1::text}}"
-        card = parse_card_block(block, 1)
-        assert validate_card(card) == []
+        parsed_note = parse_note_block(block, 1)
+        assert validate_note(parsed_note) == []
 
     def test_missing_mandatory_qa_fields(self):
-        block = "<!-- card_id: 1 -->\nE: Only extra"
-        card = parse_card_block(block, 1)
-        errors = validate_card(card)
-        for field_name, prefix in self._mandatory_fields("DeckOpsQA"):
-            assert any(field_name in e and prefix in e for e in errors)
+        block = "<!-- note_id: 1 -->\nQ: Question only"
+        parsed_note = parse_note_block(block, 1)
+        errors = validate_note(parsed_note)
+        assert any("Answer" in e and "A:" in e for e in errors)
 
     def test_missing_mandatory_cloze_field(self):
-        block = "<!-- note_id: 1 -->\nE: Only extra"
-        card = parse_card_block(block, 1)
-        errors = validate_card(card)
+        # Construct directly since T: without cloze syntax would fail validation
+        parsed_note = ParsedNote(
+            note_id=1,
+            note_type="DeckOpsCloze",
+            fields={"Extra": "Only extra"},
+            raw_content="<!-- note_id: 1 -->\nE: Only extra",
+            line_number=1,
+        )
+        errors = validate_note(parsed_note)
         for field_name, prefix in self._mandatory_fields("DeckOpsCloze"):
             assert any(field_name in e and prefix in e for e in errors)
 
+    def test_no_unique_prefix_raises(self):
+        block = "<!-- note_id: 1 -->\nE: Only extra"
+        with pytest.raises(ValueError, match="Cannot determine note type"):
+            parse_note_block(block, 1)
+
+    def test_cloze_without_cloze_syntax(self):
+        block = "T: This has no cloze deletions"
+        parsed_note = parse_note_block(block, 1)
+        errors = validate_note(parsed_note)
+        assert any("cloze syntax" in e for e in errors)
+
+    def test_cloze_with_valid_syntax(self):
+        block = "T: The {{c1::answer}} is here"
+        parsed_note = parse_note_block(block, 1)
+        assert validate_note(parsed_note) == []
+
     def test_continuation_lines_not_flagged(self):
-        block = "<!-- card_id: 1 -->\nQ: Question\nA: Answer starts\nmore answer text"
-        card = parse_card_block(block, 1)
-        assert validate_card(card) == []
+        block = "<!-- note_id: 1 -->\nQ: Question\nA: Answer starts\nmore answer text"
+        parsed_note = parse_note_block(block, 1)
+        assert validate_note(parsed_note) == []
 
 
 class TestClozeRoundTrip:
-    """Test that cloze syntax passes through HTML↔Markdown converters unchanged."""
+    """Test that cloze syntax passes through HTML<->Markdown converters unchanged."""
 
     @pytest.fixture
     def md_to_html(self):

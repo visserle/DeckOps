@@ -10,7 +10,7 @@ ANKI_CONNECT_URL = "http://localhost:8765"
 
 MARKER_FILE = ".deckops"
 
-CARD_SEPARATOR = "\n\n---\n\n"  # changing the whitespace might lead to issues
+NOTE_SEPARATOR = "\n\n---\n\n"  # changing the whitespace might lead to issues
 
 AUTO_COMMIT_DEFAULT = True
 
@@ -23,7 +23,6 @@ NOTE_TYPES = {
             ("Extra", "E:", False),
             ("More", "M:", False),
         ],
-        "id_type": "card_id",
     },
     "DeckOpsCloze": {
         "field_mappings": [
@@ -31,7 +30,6 @@ NOTE_TYPES = {
             ("Extra", "E:", False),
             ("More", "M:", False),
         ],
-        "id_type": "note_id",
     },
 }
 

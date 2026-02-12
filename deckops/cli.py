@@ -4,8 +4,8 @@ from pathlib import Path
 
 from deckops.anki_client import invoke
 from deckops.anki_to_markdown import (
-    delete_orphaned_cards,
     delete_orphaned_decks,
+    delete_orphaned_notes,
     rename_markdown_files,
     transcribe_collection,
     transcribe_deck,
@@ -85,17 +85,17 @@ def run_am(args):
 
     if not args.keep_orphans and not args.deck:
         deleted_decks = delete_orphaned_decks(output_dir=str(collection_dir))
-        deleted_cards = delete_orphaned_cards(output_dir=str(collection_dir))
+        deleted_notes = delete_orphaned_notes(output_dir=str(collection_dir))
     else:
         deleted_decks = 0
-        deleted_cards = 0
+        deleted_notes = 0
 
     logger.info(f"{'=' * 60}")
     logger.info(f"Export complete: {len(results)} files processed")
     logger.info(f"Total notes: {total}")
     logger.info(
         f"Updated: {updated}, Created: {created}, "
-        f"Deleted: {deleted + deleted_cards}, Skipped: {skipped}"
+        f"Deleted: {deleted + deleted_notes}, Skipped: {skipped}"
     )
     if renamed_files:
         logger.info(f"Renamed: {renamed_files} deck file(s)")
@@ -147,9 +147,9 @@ def run_ma(args):
     if deleted_notes:
         logger.info(f"Deleted: {deleted_notes} managed note(s) from untracked decks")
     if errors:
-        logger.warning(
-            "Errors occurred during import. Review and resolve them to ensure "
-            "all cards remain properly tracked in future exports."
+        logger.critical(
+            "Error(s) occurred during import. Review and resolve them to ensure "
+            "all notes remain properly tracked in future exports."
         )
 
 
@@ -196,7 +196,7 @@ def main():
     am_parser.add_argument(
         "--keep-orphans",
         action="store_true",
-        help="Keep deck files and cards whose IDs no longer exist in Anki",
+        help="Keep deck files and notes whose IDs no longer exist in Anki",
     )
     am_parser.add_argument(
         "--no-auto-commit",
@@ -220,7 +220,7 @@ def main():
     ma_parser.add_argument(
         "--only-add-new",
         action="store_true",
-        help="Only add new cards (skip existing cards with card or note IDs)",
+        help="Only add new notes (skip existing notes with note IDs)",
     )
     ma_parser.add_argument(
         "--no-auto-commit",

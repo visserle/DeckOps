@@ -6,11 +6,11 @@ from dataclasses import dataclass
 from pathlib import Path
 
 from deckops.anki_client import extract_deck_id, invoke
-from deckops.config import CARD_SEPARATOR, SUPPORTED_NOTE_TYPES
+from deckops.config import NOTE_SEPARATOR, SUPPORTED_NOTE_TYPES
 from deckops.html_converter import HTMLToMarkdown
 from deckops.markdown_helpers import (
-    extract_card_blocks,
-    format_card,
+    extract_note_blocks,
+    format_note,
     sanitize_filename,
 )
 
@@ -28,7 +28,7 @@ class DeckExportResult:
     created: int
     deleted: int
     skipped: int
-    # Block IDs (e.g. "card_id: 123") that appeared/disappeared
+    # Block IDs (e.g. "note_id: 123") that appeared/disappeared
     # compared to the previous file, used for cross-deck move detection.
     created_ids: set[str] | None = None
     deleted_ids: set[str] | None = None
@@ -43,47 +43,26 @@ def transcribe_deck(
     # In Anki the note ID is the creation timestamp in milliseconds.
     blocks_with_ids: list[tuple[int, str]] = []
 
-    # --- DeckOpsQA: one block per card ---
-    qa_query = f'deck:"{deck_name}" -deck:"{deck_name}::*" note:DeckOpsQA'
-    qa_card_ids = invoke("findCards", query=qa_query)
+    for note_type in SUPPORTED_NOTE_TYPES:
+        query = f'deck:"{deck_name}" -deck:"{deck_name}::*" note:{note_type}'
+        card_ids = invoke("findCards", query=query)
 
-    if qa_card_ids:
-        qa_cards_info = invoke("cardsInfo", cards=qa_card_ids)
-        qa_note_ids = list({card["note"] for card in qa_cards_info})
-        qa_notes_info = invoke("notesInfo", notes=qa_note_ids)
-        qa_note_dict = {note["noteId"]: note for note in qa_notes_info}
+        if not card_ids:
+            continue
 
-        for card in qa_cards_info:
-            blocks_with_ids.append(
-                (
-                    card["note"],
-                    format_card(
-                        card["cardId"],
-                        qa_note_dict[card["note"]],
-                        converter,
-                        note_type="DeckOpsQA",
-                    ),
-                )
-            )
+        cards_info = invoke("cardsInfo", cards=card_ids)
+        note_ids = list({card["note"] for card in cards_info})
+        notes_info = invoke("notesInfo", notes=note_ids)
 
-    # --- DeckOpsCloze: one block per note (deduplicated) ---
-    cloze_query = f'deck:"{deck_name}" -deck:"{deck_name}::*" note:DeckOpsCloze'
-    cloze_card_ids = invoke("findCards", query=cloze_query)
-
-    if cloze_card_ids:
-        cloze_cards_info = invoke("cardsInfo", cards=cloze_card_ids)
-        cloze_note_ids = list({card["note"] for card in cloze_cards_info})
-        cloze_notes_info = invoke("notesInfo", notes=cloze_note_ids)
-
-        for note in cloze_notes_info:
+        for note in notes_info:
             blocks_with_ids.append(
                 (
                     note["noteId"],
-                    format_card(
+                    format_note(
                         note["noteId"],
                         note,
                         converter,
-                        note_type="DeckOpsCloze",
+                        note_type=note_type,
                     ),
                 )
             )
@@ -91,7 +70,7 @@ def transcribe_deck(
     # Build a lookup from block ID string to (note_id, formatted_block)
     block_by_id: dict[str, tuple[int, str]] = {}
     for note_id, block in blocks_with_ids:
-        match = re.match(r"<!--\s*((?:card_id|note_id):\s*\d+)\s*-->", block)
+        match = re.match(r"<!--\s*(note_id:\s*\d+)\s*-->", block)
         if match:
             key = re.sub(r"\s+", " ", match.group(1))
             block_by_id[key] = (note_id, block)
@@ -110,7 +89,7 @@ def transcribe_deck(
     output_path = Path(output_dir) / (sanitize_filename(deck_name) + ".md")
     deck_id_line = "<!-- deck_id: {} -->".format(deck_id) + "\n" if deck_id else ""
 
-    # Compare with existing file to determine per-card changes
+    # Compare with existing file to determine per-note changes
     updated = 0
     created = 0
     deleted = 0
@@ -123,13 +102,13 @@ def transcribe_deck(
     )
 
     if old_content is not None:
-        existing_blocks = extract_card_blocks(old_content)
+        existing_blocks = extract_note_blocks(old_content)
 
-        # Preserve existing file order; append new cards sorted by creation date.
+        # Preserve existing file order; append new notes sorted by creation date.
         new_block_ids = set(block_by_id.keys())
         ordered_blocks: list[str] = []
 
-        # Keep existing cards in their current order, updating content
+        # Keep existing notes in their current order, updating content
         for block_id in existing_blocks:
             if block_id in block_by_id:
                 _, block = block_by_id[block_id]
@@ -142,7 +121,7 @@ def transcribe_deck(
                 deleted += 1
                 deleted_ids.add(block_id)
 
-        # Append genuinely new cards, sorted by creation date among themselves
+        # Append genuinely new notes, sorted by creation date among themselves
         new_ids = new_block_ids - set(existing_blocks)
         new_entries = sorted(
             ((bid, *block_by_id[bid]) for bid in new_ids),
@@ -160,8 +139,8 @@ def transcribe_deck(
         markdown_blocks = [block for _, block in blocks_with_ids]
         created = len(markdown_blocks)
 
-    cards_content = CARD_SEPARATOR.join(markdown_blocks)
-    new_content = deck_id_line + cards_content
+    notes_content = NOTE_SEPARATOR.join(markdown_blocks)
+    new_content = deck_id_line + notes_content
 
     # Only write if content actually changed
     if old_content != new_content:
@@ -236,7 +215,7 @@ def transcribe_collection(output_dir: str = ".") -> list[DeckExportResult]:
                 f"Deleted: {result.deleted}, Skipped: {result.skipped}"
             )
 
-    # Check for cross-deck moves: a card/note ID that disappeared from
+    # Check for cross-deck moves: a note ID that disappeared from
     # one file and appeared in another was moved between decks in Anki.
     all_created_ids: set[str] = set()
     all_deleted_ids: set[str] = set()
@@ -246,7 +225,7 @@ def transcribe_collection(output_dir: str = ".") -> list[DeckExportResult]:
     moved = len(all_created_ids & all_deleted_ids)
     if moved:
         logger.info(
-            f"  Note: {moved} of the above created/deleted card(s) were "
+            f"  Note: {moved} of the above created/deleted note(s) were "
             f"moved between decks (review history is preserved)"
         )
 
@@ -303,14 +282,13 @@ def delete_orphaned_decks(output_dir: str = ".") -> int:
     return deleted
 
 
-def delete_orphaned_cards(output_dir: str = ".") -> int:
-    """Delete cards/notes from markdown files whose IDs are not found in Anki.
+def delete_orphaned_notes(output_dir: str = ".") -> int:
+    """Delete notes from markdown files whose IDs are not found in Anki.
 
-    Cards without an ID are kept (they are new cards pending first sync).
+    Notes without an ID are kept (they are new notes pending first sync).
     Returns the total number of deleted blocks.
     """
-    anki_card_ids = set(invoke("findCards", query="deck:*"))
-    # Get all note IDs for note_id-based blocks (DeckOpsCloze)
+    # Get all note IDs across all supported note types
     anki_note_ids: set[int] = set()
     for note_type in SUPPORTED_NOTE_TYPES:
         note_ids = invoke("findNotes", query=f"note:{note_type}")
@@ -324,7 +302,7 @@ def delete_orphaned_cards(output_dir: str = ".") -> int:
         deck_id_prefix = deck_id_line_match.group(1) if deck_id_line_match else ""
         _, cards_content = extract_deck_id(content)
 
-        blocks = cards_content.split(CARD_SEPARATOR)
+        blocks = cards_content.split(NOTE_SEPARATOR)
         kept: list[str] = []
         deleted = 0
 
@@ -332,14 +310,6 @@ def delete_orphaned_cards(output_dir: str = ".") -> int:
             stripped = block.strip()
             if not stripped:
                 continue
-
-            card_match = re.match(r"<!--\s*card_id:\s*(\d+)\s*-->", stripped)
-            if card_match:
-                card_id = int(card_match.group(1))
-                if card_id not in anki_card_ids:
-                    deleted += 1
-                    logger.info(f"  Deleting card {card_id} from {md_file.name}")
-                    continue
 
             note_match = re.match(r"<!--\s*note_id:\s*(\d+)\s*-->", stripped)
             if note_match:
@@ -352,7 +322,7 @@ def delete_orphaned_cards(output_dir: str = ".") -> int:
             kept.append(stripped)
 
         if deleted > 0:
-            new_content = deck_id_prefix + CARD_SEPARATOR.join(kept)
+            new_content = deck_id_prefix + NOTE_SEPARATOR.join(kept)
             md_file.write_text(new_content, encoding="utf-8")
             logger.info(f"{md_file.name}: deleted {deleted} orphaned block(s)")
             total_deleted += deleted

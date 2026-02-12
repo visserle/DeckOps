@@ -1,8 +1,8 @@
-"""Shared helpers for parsing and formatting markdown card blocks.
+"""Shared helpers for parsing and formatting markdown note blocks.
 
 This module contains small utilities used by both import and export
-paths: parsing a card block from markdown, extracting card blocks from
-existing files, and formatting a card back to markdown.
+paths: parsing a note block from markdown, extracting note blocks from
+existing files, and formatting a note back to markdown.
 """
 
 import logging
@@ -12,7 +12,7 @@ from dataclasses import dataclass
 from deckops.anki_client import extract_deck_id
 from deckops.config import (
     ALL_PREFIX_TO_FIELD,
-    CARD_SEPARATOR,
+    NOTE_SEPARATOR,
     NOTE_TYPE_UNIQUE_PREFIXES,
     NOTE_TYPES,
 )
@@ -21,32 +21,34 @@ logger = logging.getLogger(__name__)
 
 
 @dataclass
-class ParsedCard:
-    card_id: int | None  # for DeckOpsQA
-    note_id: int | None  # for DeckOpsCloze
+class ParsedNote:
+    note_id: int | None
     note_type: str  # "DeckOpsQA" or "DeckOpsCloze"
     fields: dict[str, str]
     raw_content: str
     line_number: int
 
 
-def _detect_note_type(card_id, note_id, fields):
-    """Detect note type from ID comments or field names."""
-    if note_id is not None:
-        return "DeckOpsCloze"
-    if card_id is not None:
-        return "DeckOpsQA"
-    # No ID — detect from field names using unique prefixes
+CLOZE_PATTERN = re.compile(r"\{\{c\d+::")
+
+
+def _detect_note_type(fields):
+    """Detect note type from unique field prefixes.
+
+    Raises ValueError if no unique prefix (Q:, A:, T:) is found.
+    """
     for field_name in fields:
         for prefix, note_type in NOTE_TYPE_UNIQUE_PREFIXES.items():
             if ALL_PREFIX_TO_FIELD.get(prefix) == field_name:
                 return note_type
-    return "DeckOpsQA"  # default
+    raise ValueError(
+        "Cannot determine note type: no Q:, A:, or T: field found. "
+        "Every note must have at least one unique field prefix."
+    )
 
 
-def parse_card_block(block: str, line_number: int) -> ParsedCard:
+def parse_note_block(block: str, line_number: int) -> ParsedNote:
     lines = block.strip().split("\n")
-    card_id = None
     note_id = None
     fields: dict[str, str] = {}
     current_field = None
@@ -64,11 +66,6 @@ def parse_card_block(block: str, line_number: int) -> ParsedCard:
                 current_content.append(line)
             continue
 
-        card_id_match = re.match(r"<!--\s*card_id:\s*(\d+)\s*-->", line)
-        if card_id_match:
-            card_id = int(card_id_match.group(1))
-            continue
-
         note_id_match = re.match(r"<!--\s*note_id:\s*(\d+)\s*-->", line)
         if note_id_match:
             note_id = int(note_id_match.group(1))
@@ -80,7 +77,7 @@ def parse_card_block(block: str, line_number: int) -> ParsedCard:
                 current_content.append(line)
             continue
 
-        # Check for escaped prefix (e.g., \A: → literal A:)
+        # Check for escaped prefix (e.g., \A: -> literal A:)
         # This allows multiple choice options like \A: First option
         escaped_prefix = False
         for prefix in ALL_PREFIX_TO_FIELD:
@@ -105,11 +102,7 @@ def parse_card_block(block: str, line_number: int) -> ParsedCard:
                 # Check for duplicate field marker
                 if field_name in seen_fields:
                     # Build ID reference for better error context
-                    id_ref = ""
-                    if card_id is not None:
-                        id_ref = f"card_id: {card_id}"
-                    elif note_id is not None:
-                        id_ref = f"note_id: {note_id}"
+                    id_ref = f"note_id: {note_id}" if note_id is not None else ""
 
                     # Build context for error message
                     if id_ref:
@@ -122,7 +115,7 @@ def parse_card_block(block: str, line_number: int) -> ParsedCard:
                         )
                     msg = (
                         f"Duplicate field '{prefix}' {context}. "
-                        f"Did you forget to end the previous card with a blank line, "
+                        f"Did you forget to end the previous note with a blank line, "
                         f"three dashes '---' and another blank line, or is "
                         f"there an accidental duplicate prefix? "
                     )
@@ -147,10 +140,9 @@ def parse_card_block(block: str, line_number: int) -> ParsedCard:
     if current_field:
         fields[current_field] = "\n".join(current_content).strip()
 
-    note_type = _detect_note_type(card_id, note_id, fields)
+    note_type = _detect_note_type(fields)
 
-    return ParsedCard(
-        card_id=card_id,
+    return ParsedNote(
         note_id=note_id,
         note_type=note_type,
         fields=fields,
@@ -159,23 +151,23 @@ def parse_card_block(block: str, line_number: int) -> ParsedCard:
     )
 
 
-def extract_card_blocks(content: str) -> dict[str, str]:
-    """Extract identified card/note blocks from content.
+def extract_note_blocks(content: str) -> dict[str, str]:
+    """Extract identified note blocks from content.
 
-    Keys are ID strings like "card_id: 123" or "note_id: 456".
+    Keys are ID strings like "note_id: 123".
     """
     _, content = extract_deck_id(content)
-    blocks = content.split(CARD_SEPARATOR)
-    cards: dict[str, str] = {}
+    blocks = content.split(NOTE_SEPARATOR)
+    notes: dict[str, str] = {}
     for block in blocks:
         stripped = block.strip()
         if not stripped:
             continue
-        match = re.match(r"<!--\s*((?:card_id|note_id):\s*\d+)\s*-->", stripped)
+        match = re.match(r"<!--\s*(note_id:\s*\d+)\s*-->", stripped)
         if match:
             key = re.sub(r"\s+", " ", match.group(1))
-            cards[key] = stripped
-    return cards
+            notes[key] = stripped
+    return notes
 
 
 def sanitize_filename(deck_name: str) -> str:
@@ -231,32 +223,40 @@ def sanitize_filename(deck_name: str) -> str:
     return deck_name.replace("::", "__")
 
 
-def validate_card(card: ParsedCard) -> list[str]:
-    """Validate that all mandatory fields for the card's note type are present.
+def validate_note(note: ParsedNote) -> list[str]:
+    """Validate that all mandatory fields for the note type are present.
 
     Returns a list of error messages (empty if valid).
     """
     errors: list[str] = []
-    note_config = NOTE_TYPES.get(card.note_type)
+    note_config = NOTE_TYPES.get(note.note_type)
     if not note_config:
-        errors.append(f"Unknown note type '{card.note_type}'")
+        errors.append(f"Unknown note type '{note.note_type}'")
         return errors
 
     for field_name, prefix, mandatory in note_config["field_mappings"]:
-        if mandatory and not card.fields.get(field_name):
+        if mandatory and not note.fields.get(field_name):
             errors.append(f"Missing mandatory field '{field_name}' ({prefix})")
+
+    # Cloze notes must contain at least one cloze deletion in the Text field
+    if note.note_type == "DeckOpsCloze":
+        text = note.fields.get("Text", "")
+        if text and not CLOZE_PATTERN.search(text):
+            errors.append(
+                "DeckOpsCloze note must contain cloze syntax "
+                "(e.g. {{c1::answer}}) in the T: field"
+            )
 
     return errors
 
 
-def format_card(
-    id_value: int, note: dict, converter, note_type: str = "DeckOpsQA"
+def format_note(
+    note_id: int, note: dict, converter, note_type: str = "DeckOpsQA"
 ) -> str:
     note_config = NOTE_TYPES[note_type]
-    id_type = note_config["id_type"]
     field_mappings = note_config["field_mappings"]
 
-    lines = [f"<!-- {id_type}: {id_value} -->"]
+    lines = [f"<!-- note_id: {note_id} -->"]
     fields = note["fields"]
 
     for field_name, prefix, mandatory in field_mappings:
