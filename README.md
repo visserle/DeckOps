@@ -4,17 +4,13 @@
 
 **Anki decks ↔ Markdown files, in perfect sync**
 
+Editing flashcards in Anki's UI is tedious when you could be using your text editor, AI tools, and Git. Currently available Markdown → Anki tools only go one way, where edits in Anki don't sync back. 
+
+DeckOps is a fully bidirectional Anki ↔ Markdown bridge. Each deck becomes a single Markdown file that you can edit with your favorite tools. Changes sync both ways, so you can work in Anki or your editor and always stay in sync. This brings AI assistance, batch editing, and version control to your flashcard workflow.
+
 <video src="https://github.com/user-attachments/assets/f0b12979-f41a-4da9-b7fb-8587ca48329a" controls width="100%">
   Your browser does not support the video tag. Please refer to showcase.mp4.
 </video>
-
-## The Problem
-
-Editing flashcards in Anki's UI is tedious when you could be using your text editor, AI tools, and Git. Currently available Markdown → Anki tools only go one way, where edits in Anki don't sync back.
-
-## The Solution
-
-DeckOps is a fully bidirectional Anki ↔ Markdown bridge. Each deck becomes a single Markdown file that you can edit with your favorite tools. Changes sync both ways, so you can work in Anki or your editor and always stay in sync. This brings AI assistance, batch editing, and version control to your flashcard workflow.
 
 ## Features
 
