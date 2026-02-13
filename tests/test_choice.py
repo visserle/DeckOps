@@ -80,7 +80,7 @@ class TestValidateChoiceNote:
 
     def test_answer_with_spaces(self):
         """Answer field can have spaces around commas."""
-        block = "Q: Question?\nC1: A\nC2: B\nC3: C\nA: 1 , 2 , 3"
+        block = "Q: Question?\nC1: A\nC2: B\nC3: C\nA: 1 , 2 ,3"
         parsed_note = parse_note_block(block)
         errors = validate_note(parsed_note)
         assert errors == []
