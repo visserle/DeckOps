@@ -10,6 +10,10 @@ from deckops.anki_to_markdown import (
     transcribe_collection,
     transcribe_deck,
 )
+from deckops.collection_package import (
+    package_collection_to_json,
+    unpackage_collection_from_json,
+)
 from deckops.config import get_auto_commit, require_collection_dir
 from deckops.ensure_models import ensure_models
 from deckops.git import git_snapshot
@@ -153,6 +157,62 @@ def run_ma(args):
         )
 
 
+def run_package(args):
+    """Package collection to JSON format."""
+    active_profile = invoke("getActiveProfile")
+    collection_dir = require_collection_dir(active_profile)
+
+    if args.output:
+        output_file = Path(args.output)
+    else:
+        output_file = Path(f"{collection_dir.name}.json")
+
+    logger.info(f"Packaging collection from: {collection_dir}")
+    logger.info(f"Output file: {output_file}")
+
+    include_ids = not args.no_ids
+    include_media = args.include_media
+    package_collection_to_json(
+        collection_dir,
+        output_file,
+        include_ids=include_ids,
+        include_media=include_media,
+    )
+    logger.info(f"{'=' * 60}")
+    logger.info(f"Package complete: {output_file}")
+
+
+def run_unpackage(args):
+    """Unpackage collection from JSON/ZIP format."""
+    package_file = Path(args.package_file)
+
+    if not package_file.exists():
+        logger.error(f"Package file not found: {package_file}")
+        raise SystemExit(1)
+
+    # Determine collection directory
+    if args.directory:
+        collection_dir = Path(args.directory)
+    else:
+        # Use filename (without extension) as collection directory name
+        collection_dir = Path(package_file.stem)
+
+    logger.info(f"Importing package from: {package_file}")
+    logger.info(f"Creating local collection in: {collection_dir}")
+
+    if collection_dir.exists() and not args.overwrite:
+        logger.warning(
+            f"Collection directory {collection_dir} already exists. "
+            "Use --overwrite to replace existing files."
+        )
+
+    unpackage_collection_from_json(
+        package_file, collection_dir, overwrite=args.overwrite
+    )
+    logger.info(f"{'=' * 60}")
+    logger.info(f"Import complete: {collection_dir}")
+
+
 def main():
     parser = argparse.ArgumentParser(
         description="DeckOps – Manage Anki decks as Markdown files.",
@@ -230,6 +290,51 @@ def main():
     )
     ma_parser.set_defaults(handler=run_ma)
 
+    # Package parser
+    package_parser = subparsers.add_parser(
+        "package",
+        help="Export your DeckOps collection to a portable JSON/ZIP file",
+    )
+    package_parser.add_argument(
+        "--output",
+        "-o",
+        help="Output package file path (default: <collection-name>.json)",
+    )
+    package_parser.add_argument(
+        "--no-ids",
+        action="store_true",
+        help="Exclude note_id and deck_id from package (useful for sharing/templates)",
+    )
+    package_parser.add_argument(
+        "--include-media",
+        action="store_true",
+        help="Bundle media files into a ZIP archive (creates .zip instead of .json)",
+    )
+    package_parser.set_defaults(handler=run_package)
+
+    # Unpackage parser
+    unpackage_parser = subparsers.add_parser(
+        "unpackage",
+        help="Import a packaged collection (JSON/ZIP) into a local DeckOps directory",
+    )
+    unpackage_parser.add_argument(
+        "package_file",
+        metavar="PACKAGE",
+        help="Package file to import (.json or .zip)",
+    )
+    unpackage_parser.add_argument(
+        "--directory",
+        "-d",
+        metavar="DIR",
+        help="Local collection directory to create/update (default: use package filename)",
+    )
+    unpackage_parser.add_argument(
+        "--overwrite",
+        action="store_true",
+        help="Overwrite existing markdown files (Anki media uses smart conflict resolution)",
+    )
+    unpackage_parser.set_defaults(handler=run_unpackage)
+
     args = parser.parse_args()
 
     log_level = logging.DEBUG if args.debug else logging.INFO
@@ -249,11 +354,15 @@ def main():
         )
         print("  anki-to-markdown  Export Anki decks to Markdown files (alias: am)")
         print("  markdown-to-anki  Import Markdown files into Anki (alias: ma)")
+        print("  package           Export collection to a portable JSON/ZIP package")
+        print("  unpackage         Import a package into a local DeckOps directory")
         print()
         print("Usage examples:")
-        print("  deckops init --tutorial        # Initialize with tutorial")
-        print("  deckops am                     # Export all decks to Markdown")
-        print("  deckops ma                     # Import all Markdown files to Anki")
+        print("  deckops init --tutorial          # Initialize with tutorial")
+        print("  deckops am                       # Export all decks to Markdown")
+        print("  deckops ma                       # Import all Markdown files to Anki")
+        print("  deckops package -o my-deck.json  # Export collection to package")
+        print("  deckops unpackage my-deck.json   # Import package to local directory")
         print()
         print("For more information:")
         print("  deckops --help                 # Show general help")

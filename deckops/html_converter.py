@@ -124,7 +124,7 @@ class _AnkiVisitor:
 _OPTIONS = ConversionOptions(
     heading_style="atx",
     bullets="-",
-    list_indent_width=2,
+    list_indent_width=3,
     highlight_style="double-equal",
     autolinks=False,
     extract_metadata=False,

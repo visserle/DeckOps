@@ -142,6 +142,24 @@ class TestRoundTripLists:
         assert "*Italic*" in restored_md
         assert "`code`" in restored_md
 
+    def test_ordered_list_with_nested_unordered_roundtrip(self, html_to_md, md_to_html):
+        original_md = (
+            "1. First item\n   - Nested bullet 1\n   - Nested bullet 2\n2. Second item"
+        )
+        html = md_to_html.convert(original_md)
+        restored_md = html_to_md.convert(html)
+        # Check that nested items are indented (indicating they're nested under item 1)
+        assert "1. First item" in restored_md
+        assert "2. Second item" in restored_md
+        # Nested bullets should have indentation (spaces or tabs before -)
+        lines = restored_md.split("\n")
+        # Find lines with nested bullets - they should have leading whitespace
+        nested_lines = [line for line in lines if "Nested bullet" in line]
+        assert len(nested_lines) == 2
+        assert all(line.startswith((" ", "\t")) for line in nested_lines), (
+            "Nested items should be indented"
+        )
+
 
 class TestRoundTripLinks:
     """Test round-trip conversion of links."""
@@ -160,7 +178,9 @@ class TestRoundTripLinks:
         assert "example.com/path" in restored_md
 
     def test_link_with_parentheses_roundtrip(self, html_to_md, md_to_html):
-        original_md = "[Wiki](<https://en.wikipedia.org/wiki/Python_(programming_language)>)"
+        original_md = (
+            "[Wiki](<https://en.wikipedia.org/wiki/Python_(programming_language)>)"
+        )
         html = md_to_html.convert(original_md)
         restored_md = html_to_md.convert(html)
         # Link with parens should use angle brackets
@@ -320,7 +340,10 @@ class TestRoundTripEscapedCharacters:
         original_md = r"\> This is not a blockquote"
         html = md_to_html.convert(original_md)
         # HTML should contain literal >
-        assert "> This is not a blockquote" in html or "&gt; This is not a blockquote" in html
+        assert (
+            "> This is not a blockquote" in html
+            or "&gt; This is not a blockquote" in html
+        )
         assert "<blockquote>" not in html
         # Convert back to markdown
         restored_md = html_to_md.convert(html)
@@ -365,7 +388,7 @@ class TestRoundTripSpecialCharacters:
         assert ">" in restored_md or "&gt;" in restored_md
 
     def test_quotes_roundtrip(self, html_to_md, md_to_html):
-        original_md = 'He said "Hello" and she replied \'Hi\''
+        original_md = "He said \"Hello\" and she replied 'Hi'"
         html = md_to_html.convert(original_md)
         restored_md = html_to_md.convert(html)
         assert "Hello" in restored_md
@@ -439,7 +462,7 @@ class TestRoundTripComplexScenarios:
         assert "==Wichtig==" in restored_md
 
     def test_code_with_markdown_syntax_roundtrip(self, html_to_md, md_to_html):
-        original_md = "```python\n# This is a comment\ntext = \"**not bold**\"\n```"
+        original_md = '```python\n# This is a comment\ntext = "**not bold**"\n```'
         html = md_to_html.convert(original_md)
         restored_md = html_to_md.convert(html)
         assert "```python" in restored_md

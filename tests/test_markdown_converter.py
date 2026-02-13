@@ -165,6 +165,28 @@ class TestRoundTripLists:
         assert "<em>" in restored_html or "<i>" in restored_html
         assert "<code>" in restored_html
 
+    def test_ordered_list_with_nested_unordered_roundtrip(self, md_to_html, html_to_md):
+        original_html = (
+            "<ol><li>First item<ul><li>Nested bullet 1</li><li>Nested bullet 2</li></ul></li>"
+            "<li>Second item</li></ol>"
+        )
+        md = html_to_md.convert(original_html)
+        restored_html = md_to_html.convert(md)
+        # Verify the nesting structure is preserved: <ul> should be inside <ol><li>
+        assert "<ol>" in restored_html
+        assert "<ul>" in restored_html
+        # Check that ul comes after the first li but before the closing of ol
+        # This ensures proper nesting
+        ol_start = restored_html.find("<ol>")
+        ul_start = restored_html.find("<ul>")
+        ol_end = restored_html.find("</ol>")
+        assert ol_start < ul_start < ol_end, "UL should be nested inside OL"
+        # Verify content is in the right structure
+        assert "First item" in restored_html
+        assert "Nested bullet 1" in restored_html
+        assert "Nested bullet 2" in restored_html
+        assert "Second item" in restored_html
+
 
 class TestRoundTripLinks:
     """Test round-trip conversion of links."""

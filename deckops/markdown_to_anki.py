@@ -181,24 +181,44 @@ def _import_existing_notes(
             )
         return []
 
-    # Safety check: Ensure all notes have a correct DeckOps template
-    for note in notes_info:
-        model = note.get("modelName") if note else None
-        if model and model not in SUPPORTED_NOTE_TYPES:
-            raise ValueError(
-                f"Safety check failed: Note {note['noteId']} has template "
-                f"'{note['modelName']}' but expected a DeckOps template. "
-                f"DeckOps will never modify notes with non-DeckOps templates."
-            )
-
+    # Extract fields and perform safety checks in a single pass
     note_fields: dict[int, dict[str, str]] = {}
     note_card_ids: dict[int, list[int]] = {}
+    note_id_to_model: dict[int, str] = {}
+
     for note in notes_info:
         if note:
+            # Safety check: Ensure all notes have a correct DeckOps template
+            model = note.get("modelName")
+            if model and model not in SUPPORTED_NOTE_TYPES:
+                raise ValueError(
+                    f"Safety check failed: Note {note['noteId']} has template "
+                    f"'{note['modelName']}' but expected a DeckOps template. "
+                    f"DeckOps will never modify notes with non-DeckOps templates."
+                )
+
+            # Extract fields and track note types
             note_fields[note["noteId"]] = {
                 name: info["value"] for name, info in note["fields"].items()
             }
             note_card_ids[note["noteId"]] = note.get("cards", [])
+            note_id_to_model[note["noteId"]] = model
+
+    # Safety check: Ensure note types in markdown match note types in Anki
+    # AnkiConnect does not support changing note types
+    for parsed_note, _ in existing_notes:
+        assert parsed_note.note_id is not None
+        anki_note_type = note_id_to_model.get(parsed_note.note_id)
+        if anki_note_type and anki_note_type != parsed_note.note_type:
+            raise ValueError(
+                f"Note type mismatch for note {parsed_note.note_id} "
+                f"(line {parsed_note.line_number}): "
+                f"Markdown specifies '{parsed_note.note_type}' "
+                f"but Anki has '{anki_note_type}'. "
+                f"AnkiConnect does not support changing note types. "
+                f"Please manually change the note type in Anki "
+                f"or delete the old note_id HTML tag to re-create the note."
+            )
 
     # Move cards that are in the wrong deck
     all_card_ids = [cid for cids in note_card_ids.values() for cid in cids]
@@ -351,35 +371,47 @@ def _delete_orphaned_notes(
     """
     md_note_ids = {n.note_id for n in parsed_notes if n.note_id is not None}
 
-    for note_type in SUPPORTED_NOTE_TYPES:
-        query = f'deck:"{deck_name}" -deck:"{deck_name}::*" note:{note_type}'
-        anki_card_ids = invoke("findCards", query=query)
+    # Combine all note types into a single query for better performance
+    note_type_conditions = " OR ".join(f"note:{nt}" for nt in SUPPORTED_NOTE_TYPES)
+    query = f'deck:"{deck_name}" -deck:"{deck_name}::*" ({note_type_conditions})'
+    anki_card_ids = invoke("findCards", query=query)
 
-        if not anki_card_ids:
-            continue
+    if not anki_card_ids:
+        return
 
-        cards_info = invoke("cardsInfo", cards=anki_card_ids)
-        anki_note_ids = {c["note"] for c in cards_info}
-        orphaned_notes = anki_note_ids - md_note_ids
-        if global_note_ids:
-            orphaned_notes -= global_note_ids
+    # Get all card info in a single call
+    cards_info = invoke("cardsInfo", cards=anki_card_ids)
+    anki_note_ids = {c["note"] for c in cards_info}
+    orphaned_notes = anki_note_ids - md_note_ids
+    if global_note_ids:
+        orphaned_notes -= global_note_ids
 
-        if orphaned_notes:
-            # Build note_id -> card_ids mapping for clear logging
-            note_to_cards: dict[int, list[int]] = {}
-            for c in cards_info:
-                if c["note"] in orphaned_notes:
-                    note_to_cards.setdefault(c["note"], []).append(c["cardId"])
+    if orphaned_notes:
+        # Get note types for proper logging
+        notes_info = invoke("notesInfo", notes=list(orphaned_notes))
+        note_id_to_type = {
+            note["noteId"]: note["modelName"] for note in notes_info if note
+        }
 
-            invoke("deleteNotes", notes=list(orphaned_notes))
-            result.deleted += len(orphaned_notes)
-            for nid, cids in note_to_cards.items():
-                cid_str = ", ".join(str(c) for c in cids)
-                logger.info(
-                    f"  Deleted {note_type} note {nid}"
-                    f"{f' (cards {cid_str})' if cid_str else ''}"
-                    f" from Anki"
-                )
+        # Build note_id -> card_ids mapping for clear logging
+        note_to_cards: dict[int, list[int]] = {}
+        for c in cards_info:
+            if c["note"] in orphaned_notes:
+                note_to_cards.setdefault(c["note"], []).append(c["cardId"])
+
+        # Delete all orphaned notes in a single call
+        invoke("deleteNotes", notes=list(orphaned_notes))
+        result.deleted += len(orphaned_notes)
+
+        # Log each deletion with its note type
+        for nid, cids in note_to_cards.items():
+            note_type = note_id_to_type.get(nid, "unknown")
+            cid_str = ", ".join(str(c) for c in cids)
+            logger.info(
+                f"  Deleted {note_type} note {nid}"
+                f"{f' (cards {cid_str})' if cid_str else ''}"
+                f" from Anki"
+            )
 
 
 def import_file(
@@ -582,8 +614,9 @@ def import_collection(
     duplicates: list[str] = []
     duplicate_ids: set[int] = set()
 
-    # Check for duplicate deck_ids across files
+    # Check for duplicate deck_ids and note_ids in a single pass
     for md_file in md_files:
+        # Check deck_id duplicates
         deck_id = parse_deck_id(md_file)
         if deck_id is not None:
             if deck_id in deck_id_sources:
@@ -595,7 +628,7 @@ def import_collection(
             else:
                 deck_id_sources[deck_id] = md_file.name
 
-    for md_file in md_files:
+        # Check note_id duplicates
         for parsed_note in parse_markdown_file(md_file):
             if parsed_note.note_id is not None:
                 if parsed_note.note_id in note_id_sources:

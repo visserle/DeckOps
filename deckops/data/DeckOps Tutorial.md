@@ -1,7 +1,6 @@
 Q: Welcome to DeckOps!
-A: Manage your Anki decks as Markdown files.
-E: Edit in your favorite editor, sync to Anki, and review anywhere.
-M: Pretty neat, huh
+A: Anki decks ↔ Markdown files, in perfect sync.
+M: Neat.
 
 ---
 
@@ -9,38 +8,34 @@ T: DeckOps supports {{c1::cloze deletions}} and even {{c1::multiple}} {{c2::cloz
 
 ---
 
+Q: What is this?
+C1: A multiple choice question
+C2: with
+C3: automatically randomized answers.
+A: 1,3
+
+---
+
 Q: What Markdown features are supported?
-A: **Bold text**, *italic text*, ==highlighted text==, ~~strikethrough~~, and `inline code`
+A: **Bold text**, *italic text*, ==highlighted text==, ~~strikethrough~~, `inline code`,
 
-> This is a blockquote
-> And another one
+> blockquotes,
+> another one,
 
-**Lists:**
+1. ordered lists,
+   - even nested unordered items,
 
-- Unordered item 1
-- Unordered item 2
-  - Nested item 1
-  - (also available for ordered lists)
-
-**Tables:**
-
-| Header 1 | Header 2 |
+| Beautiful | Tables, |
 | --- | --- |
-| Cell 1 | Cell 2 |
-| Cell 3 | Cell 4 |
+| inline formula: | \(E = mc^2\), and |
 
-**Code blocks** with syntax highlighting:
+\[\int_{-\infty}^{\infty} e^{-x^2} dx = \sqrt{\pi},\] and, of course, code blocks:
 
 ```python
-def hello():
-    print("Hello, World!")
-    return 42
+def truth():
+    print("DeckOps is awesome")
 
 ```
-
-**Math**: Inline \(E = mc^2\) and block formulas
-
-\[\int_{-\infty}^{\infty} e^{-x^2} dx = \sqrt{\pi}\]
 E: *Everything renders beautifully on desktop and mobile.*
 
 ---

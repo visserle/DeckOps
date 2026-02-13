@@ -14,16 +14,17 @@ Editing flashcards in Anki's UI is tedious when you could be using your favorite
 
 ## Features
 
-- Fully round-trip, bidirectional sync that handles note identities, moves, deletions, drifts, and conflicts.
+- Fully round-trip, bidirectional sync that handles note creations, deletions. movements, and conflicts.
 - Thoroughly tested, bidirectional conversion between Markdown and Anki-compatible HTML
 - Markdown support with nearly all features (including syntax-highlighted code blocks, supported on desktop and mobile)
-- Support for Base (Q&A), Cloze, Single and Multiple Choice notes using custom DeckOps templates
-- Built-in Git integration with autocommit for tracking all changes
+- Support for Basic (Q&A), Cloze, Single and Multiple Choice notes using custom templates
 - Image support via VS Code where images are directly copied into your Anki media folder (automatically set up)
+- Built-in Git integration with autocommit for tracking all changes
+- Package/unpackage entire collections to JSON format for backup, sharing, or AI processing
 - Simple CLI interface: after initialization, only two commands are needed for daily use
 
 > [!NOTE]
-> DeckOps only syncs `DeckOpsQA`, `DeckOpsCloze`, and `DeckOpsChoice` note types. Other note types will not be synced.
+> DeckOps only syncs the `DeckOpsQA`, `DeckOpsCloze`, and `DeckOpsChoice` note types. Other note types will not be synced.
 
 
 ## Getting Started
@@ -45,6 +46,7 @@ deckops ma # markdown to anki (import)
 ```bash
 deckops am # anki to markdown (export)
 ```
+
 ## FAQ
 
 ### How is this different from other Markdown or Obsidian tools?
@@ -72,6 +74,14 @@ E: ![image with set width](im.png){width=700}
 
 ---
 
+Q: What is this?
+C1: A multiple choice note
+C2: with
+C3: automatically randomized answers.
+A: 1,3
+
+---
+
 And so on…
 ```
 
@@ -87,9 +97,9 @@ On first import, DeckOps assigns IDs from Anki to each deck and note for trackin
 
 We recommend using VS Code. It has excellent AI integration, a great [add-on](https://marketplace.visualstudio.com/items?itemName=shd101wyy.markdown-preview-enhanced) for Markdown previews, and supports image pasting (which will be saved in your Anki media folder by default).
 
-### How can I share my DeckOps deck with others?
+### How can I share my DeckOps collection?
 
-You can either export your deck using Anki's native export feature (`.apkg` file) and share that, or directly share your Markdown files along with the `media/DeckOpsMedia` folder. Make sure to remove all ID tags from your Markdown files first, as they are profile-specific.
+Use `deckops package --no-ids` to export your local DeckOps collection to a clean JSON package file without profile-specific IDs. Add `--include-media` to bundle media files from the Anki media folder into a ZIP archive. Recipients can import either format with `deckops unpackage <package-file>`, which creates a new local DeckOps directory on their machine and imports media to their Anki folder with smart conflict resolution. Alternatively, you could share your collection using the native Anki export (`.apkg`), or by sharing your plain Markdown files along with the `media/DeckOpsMedia` folder. Make sure to remove all ID tags from your Markdown files first, as they are profile-specific.
 
 ### How can I migrate my existing notes into DeckOps?
 
@@ -132,6 +142,16 @@ uv run python -m main ma
 - `--file`, `-f` - Import single file
 - `--only-add-new` - Only add new notes, skip existing
 - `--no-auto-commit`, `-n` - Skip automatic git commit
+
+**`package`:**
+- `--output`, `-o` - Output package file path (default: `<collection-name>.json`)
+- `--no-ids` - Exclude note_id and deck_id from package (useful for templates/sharing)
+- `--include-media` - Bundle media files into a ZIP archive (creates .zip instead of .json)
+
+**`unpackage`:**
+- `PACKAGE` - Package file to import: .json or .zip (required)
+- `--directory`, `-d` - Local collection directory to create/update (default: use package filename)
+- `--overwrite` - Overwrite existing markdown files (media uses smart conflict resolution)
 
 ---
 
