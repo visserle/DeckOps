@@ -1,0 +1,128 @@
+<style>
+    .choice-item {
+        text-align: left;
+        display: block;
+        padding: 8px;
+        margin: 4px 0;
+        border-radius: 4px;
+        background-color: #f0f0f0;
+    }
+    .night-mode .choice-item {
+        background-color: #333;
+    }
+    .choice-correct {
+        background-color: #d4edda !important;
+        font-weight: bold;
+        border: 2px solid #28a745;
+    }
+    .night-mode .choice-correct {
+        background-color: #1e4620 !important;
+        border-color: #28a745;
+    }
+    .choice-incorrect {
+        opacity: 0.4;
+    }
+</style>
+
+{{edit:Question}}
+
+<div id="choices" style="margin: 20px auto; max-width: 600px;"></div>
+
+<script>
+// Build choices array from fields
+var choices = [];
+{{#Choice 1}}
+choices.push({num: 1, text: `{{Choice 1}}`});
+{{/Choice 1}}
+{{#Choice 2}}
+choices.push({num: 2, text: `{{Choice 2}}`});
+{{/Choice 2}}
+{{#Choice 3}}
+choices.push({num: 3, text: `{{Choice 3}}`});
+{{/Choice 3}}
+{{#Choice 4}}
+choices.push({num: 4, text: `{{Choice 4}}`});
+{{/Choice 4}}
+{{#Choice 5}}
+choices.push({num: 5, text: `{{Choice 5}}`});
+{{/Choice 5}}
+{{#Choice 6}}
+choices.push({num: 6, text: `{{Choice 6}}`});
+{{/Choice 6}}
+{{#Choice 7}}
+choices.push({num: 7, text: `{{Choice 7}}`});
+{{/Choice 7}}
+
+// Parse answer field
+var answerText = "{{Answer}}";
+var correctAnswers = answerText.split(',').map(function(s) { return s.trim(); });
+
+// Get card ID and review counter for consistent shuffle matching front
+var cardId = document.documentElement.dataset.cid || '0';
+var storageKey = 'deckops_review_' + cardId;
+
+// Read current review counter (incremented on front side)
+var reviewCount = parseInt(localStorage.getItem(storageKey) || '0', 10);
+
+// Create seed from card ID and review count with proper hashing
+var seed = 0;
+var seedStr = cardId + '_' + reviewCount;
+for (var i = 0; i < seedStr.length; i++) {
+    seed = ((seed << 5) - seed) + seedStr.charCodeAt(i);
+    seed = seed | 0; // Convert to 32bit integer
+}
+// Ensure positive seed and add choice content for uniqueness
+seed = Math.abs(seed);
+choices.forEach(function(c) {
+    for (var i = 0; i < c.text.length; i++) {
+        seed = ((seed << 5) - seed) + c.text.charCodeAt(i);
+        seed = Math.abs(seed | 0); // Keep positive
+    }
+});
+
+function seededRandom() {
+    seed = (seed * 9301 + 49297) % 233280;
+    return seed / 233280;
+}
+
+// Shuffle array using Fisher-Yates algorithm with seeded random
+for (var i = choices.length - 1; i > 0; i--) {
+    var j = Math.floor(seededRandom() * (i + 1));
+    var temp = choices[i];
+    choices[i] = choices[j];
+    choices[j] = temp;
+}
+
+// Create and append choice elements with styling
+var container = document.getElementById('choices');
+choices.forEach(function(choice) {
+    var div = document.createElement('div');
+    div.className = 'choice-item';
+    div.setAttribute('data-num', choice.num);
+    div.innerHTML = choice.text;
+
+    // Apply correct/incorrect styling
+    if (correctAnswers.indexOf(String(choice.num)) !== -1) {
+        div.classList.add('choice-correct');
+    } else {
+        div.classList.add('choice-incorrect');
+    }
+
+    container.appendChild(div);
+});
+</script>
+
+{{#Extra}}
+<hr>
+{{edit:Extra}}
+{{/Extra}}
+
+{{#More}}
+<hr>
+<div class="more more-button" href="#"
+    onclick="this.style.display='none';document.getElementById('more_back').style.display='inline-block';return false;">
+    More</div>
+<div id="more_back" class="more more-content" style="display: none">
+    <div id="more">{{edit:More}}</div>
+</div>
+{{/More}}
