@@ -6,20 +6,17 @@
 
 Editing flashcards in Anki's UI is tedious when you could be using your favorite text editor, AI tools, and Git. Currently available Markdown → Anki tools only go one way, where edits in Anki don't sync back. 
 
-**DeckOps** is a bidirectional Anki ↔ Markdown bridge. Each deck is a Markdown file. Work in either Anki or your text editor, and let changes flow both ways. This brings AI assistance, batch editing, and version control to your flashcard workflow:
-
-<video src="https://github.com/user-attachments/assets/f0b12979-f41a-4da9-b7fb-8587ca48329a" controls width="100%">
-  Your browser does not support the video tag. Please refer to showcase.mp4.
-</video>
+**DeckOps** is a bidirectional Anki ↔ Markdown bridge. Each deck is a Markdown file. Work in either Anki or your text editor, and let changes flow both ways. This brings AI assistance, batch editing, and version control to your flashcards.
 
 ## Features
 
-- Fully round-trip, bidirectional sync that handles note creations, deletions, movements, and conflicts.
+- Fully round-trip, bidirectional sync that handles note creations, deletions, movements, and conflicts
 - Thoroughly tested, bidirectional conversion between Markdown and Anki-compatible HTML
+- High-performance processing: handles thousands of cards across hundreds of decks in seconds
 - Markdown rendering with nearly all features (including syntax-highlighted code blocks, supported on desktop and mobile)
 - Support for Basic (Q&A), Cloze, Single & Multiple Choice note types
 - Embed images via VS Code where they are directly copied into your Anki media folder (automatically set up)- Built-in Git integration with autocommit for tracking all changes
-- Package/unpackage entire collections to JSON format for backup, sharing, or AI processing
+- Package/unpackage entire collections to JSON format for backup, sharing, or automated AI processing
 - Simple CLI interface: after initialization, only two commands are needed for daily use
 
 > [!NOTE]
@@ -151,99 +148,6 @@ uv run python -m main ma
 - `PACKAGE` - Package file to import: .json or .zip (required)
 - `--directory`, `-d` - Local collection directory to create/update (default: use package filename)
 - `--overwrite` - Overwrite existing markdown files (media uses smart conflict resolution)
-
----
-
-### How does DeckOps solve bidirectional sync? (Claude's answer)
-
-DeckOps handles the core challenges of bidirectional synchronization between markdown and Anki:
-
-#### 1. Identity
-
-**Solution**: Embed immutable IDs directly in markdown as HTML comments
-
-- **Deck Identity**: `<!-- deck_id: 1234567890 -->` on first line of file
-- **Note Identity**: `<!-- note_id: 1770487991522 -->` before each note
-
-IDs are Anki's native IDs (timestamps in milliseconds), written to Markdown on first sync and persisting across all future syncs, enabling bidirectional linking.
-
-
-#### 2. Moves (Between Decks)
-
-**Solution**: Move detection + automatic deck correction
-
-**Import (Markdown → Anki)**:
-When you move a note between markdown files:
-1. Cut note from `DeckA.md` (keeping its ID)
-2. Paste into `DeckB.md`
-3. Import detects note in wrong deck → **auto-moves to DeckB**
-4. **Review history preserved** 
-
-
-**Export (Anki → Markdown)**:
-When you move a note between decks in Anki:
-1. Export detects note disappeared from DeckA, appeared in DeckB
-2. Reports as move (not deletion + creation)
-3. Note appears in correct Markdown file
-
-Note: Deck renaming is only possible via export (Anki → Markdown). While import (Markdown → Anki) can be used to create new decks named after the file, renaming decks should always happen via export. Since the `deck_id` is not dependent on the file name, there is no conflict when the Markdown file name differs from a deck's name in Anki.
-
-#### 3. Conflict Resolution
-
-**Solution**: **Last sync direction wins** (no merging)
-
-**Import (Markdown → Anki)**:
-- Markdown content **overwrites** Anki content
-- Updates existing notes with markdown content
-- If fields match → skip (optimization)
-- If fields differ → markdown wins
-
-**Export (Anki → Markdown)**:
-- Anki content **overwrites** Markdown content
-- Existing blocks replaced with Anki's current state
-- Deck renames reflected in file renames
-
-This simple approach requires discipline: always sync in the same direction for a given edit session.
-
-#### 4. Drift Detection & Recovery
-
-**Solution**: "Stale note" detection with automatic re-creation
-
-**What is drift?**
-- Note exists in Markdown with `note_id: 123`
-- But ID 123 no longer exists in Anki (manually deleted)
-
-**How it's resolved (import)**:
-1. Phase 1: Try to update note 123 → fails
-2. Mark as "stale"
-3. Phase 3: Re-create in Anki with new ID (e.g., 456)
-4. Phase 4: Update Markdown: `<!-- note_id: 123 -->` → `<!-- note_id: 456 -->`
-
-**Result**: Drift is automatically healed. Content preserved, but review history lost (new note).
-
-#### 5. Deletions
-
-**Solution**: Bidirectional orphan cleanup
-
-**Markdown → Anki (Import)**:
-- Notes in Anki deck but NOT in Markdown file → deleted from Anki
-- Exception: Notes claimed by other files are moved, not deleted
-
-**Anki → Markdown (Export)**:
-- **Orphaned decks**: File has `deck_id` but deck doesn't exist → delete file
-- **Orphaned notes**: Note has `note_id` but note doesn't exist → remove block
-
-Deletions propagate in both directions to maintain consistency.
-
-#### Summary
-
-| Challenge | Solution | Preserves History? |
-|-----------|----------|-------------------|
-| **Identity** | Embed Anki IDs in Markdown |  Yes |
-| **Moves** | Auto-move + global tracking |  Yes |
-| **Conflicts** | Last sync wins (no merge) |  Yes |
-| **Drift** | Stale note detection + re-creation | No |
-| **Deletions** | Bidirectional orphan cleanup | N/A |
 
 ---
 
