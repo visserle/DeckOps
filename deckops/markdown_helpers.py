@@ -1,8 +1,6 @@
 """Shared helpers for parsing and formatting markdown note blocks.
 
-This module contains small utilities used by both import and export
-paths: parsing a note block from markdown, extracting note blocks from
-existing files, and formatting a note back to markdown.
+Used by both import (markdown_to_anki) and export (anki_to_markdown) paths.
 """
 
 import logging
@@ -17,132 +15,106 @@ from deckops.config import (
 
 logger = logging.getLogger(__name__)
 
-# Regex patterns used throughout parsing and validation
 _CLOZE_PATTERN = re.compile(r"\{\{c\d+::")
 _NOTE_ID_PATTERN = re.compile(r"<!--\s*note_id:\s*(\d+)\s*-->")
 _DECK_ID_PATTERN = re.compile(r"<!--\s*deck_id:\s*(\d+)\s*-->\n?")
 _CODE_FENCE_PATTERN = re.compile(r"^(```|~~~)")
 
+_WINDOWS_RESERVED = {
+    "CON", "PRN", "AUX", "NUL",
+    *(f"COM{i}" for i in range(1, 10)),
+    *(f"LPT{i}" for i in range(1, 10)),
+}
+
+
+# ---------------------------------------------------------------------------
+# Data
+# ---------------------------------------------------------------------------
+
 
 @dataclass
 class ParsedNote:
     note_id: int | None
-    note_type: str  # "DeckOpsQA" or "DeckOpsCloze"
+    note_type: str
     fields: dict[str, str]
     raw_content: str
 
 
-def _note_identifier(note: ParsedNote) -> str:
-    """Return stable identifier for error messages.
-
-    Line numbers become stale after ID insertion, so we use note_id
-    when available, or first line of content for new notes.
-    """
+def note_identifier(note: ParsedNote) -> str:
+    """Stable identifier for error messages (note_id or first content line)."""
     if note.note_id:
         return f"note_id: {note.note_id}"
-    # Use first line of content (up to 60 chars)
     first_line = note.raw_content.strip().split("\n")[0][:60]
     return f"'{first_line}...'"
 
 
+# ---------------------------------------------------------------------------
+# Parsing
+# ---------------------------------------------------------------------------
+
+
 def extract_deck_id(content: str) -> tuple[int | None, str]:
-    """Extract deck_id from the first line and return (deck_id, remaining content)."""
+    """Extract deck_id from the first line and return (deck_id, remaining)."""
     match = _DECK_ID_PATTERN.match(content)
     if match:
-        return int(match.group(1)), content[match.end() :]
+        return int(match.group(1)), content[match.end():]
     return None, content
 
 
 def extract_note_blocks(content: str) -> dict[str, str]:
     """Extract identified note blocks from content.
 
-    Keys are ID strings like "note_id: 123".
+    Returns {"note_id: 123": block_content, ...}.
     """
     _, content = extract_deck_id(content)
-    blocks = content.split(NOTE_SEPARATOR)
     notes: dict[str, str] = {}
-    for block in blocks:
+    for block in content.split(NOTE_SEPARATOR):
         stripped = block.strip()
         if not stripped:
             continue
         match = _NOTE_ID_PATTERN.match(stripped)
         if match:
-            key = f"note_id: {match.group(1)}"
-            notes[key] = stripped
+            notes[f"note_id: {match.group(1)}"] = stripped
     return notes
 
 
-def _detect_note_type(fields):
-    """Detect note type from unique field prefixes.
-
-    Checks most specific prefixes first: C1: > T: > Q:/A:
-    """
+def _detect_note_type(fields: dict[str, str]) -> str:
+    """Detect note type from parsed fields (most specific first)."""
     if "Choice 1" in fields:
         return "DeckOpsChoice"
     if "Text" in fields:
         return "DeckOpsCloze"
     if "Question" in fields or "Answer" in fields:
         return "DeckOpsQA"
-
     raise ValueError(
         "Cannot determine note type: no Q:, A:, T:, or C1: field found"
     )
 
 
-def _validate_unique_field(
-    field_name: str,
-    prefix: str,
-    seen_fields: dict[str, bool],
-    note_id: int | None,
-) -> None:
-    """Raise ValueError if field was already seen in this note block.
-
-    Args:
-        field_name: The field name (e.g., "Question", "Answer")
-        prefix: The markdown prefix (e.g., "Q:", "A:")
-        seen_fields: Dictionary tracking which fields have been seen
-        note_id: Optional note ID for error context
-    """
-    if field_name not in seen_fields:
-        return
-
-    # Build context for error message
-    if note_id:
-        context = f"in note_id: {note_id}"
-    else:
-        context = "in this note"
-
-    msg = (
-        f"Duplicate field '{prefix}' {context}. "
-        f"Did you forget to end the previous note with '\\n\\n---\\n\\n' "
-        f"or is there an accidental duplicate prefix?"
-    )
-    logger.error(msg)
-    raise ValueError(msg)
-
-
 def parse_note_block(block: str) -> ParsedNote:
+    """Parse a raw markdown block into a ParsedNote."""
     lines = block.strip().split("\n")
-    note_id = None
+    note_id: int | None = None
     fields: dict[str, str] = {}
-    current_field = None
+    current_field: str | None = None
     current_content: list[str] = []
     in_code_block = False
-    seen_fields: dict[str, bool] = {}  # field_name -> whether it was seen
+    seen: set[str] = set()
 
     for line in lines:
-        # Track fenced code blocks (``` or ~~~) to avoid detecting
-        # Q:/A:/T: prefixes inside code examples
         stripped = line.lstrip()
+
+        # Track fenced code blocks to avoid detecting prefixes inside code
         if _CODE_FENCE_PATTERN.match(stripped):
             in_code_block = not in_code_block
             if current_field:
                 current_content.append(line)
             continue
 
-        note_id_match = _NOTE_ID_PATTERN.match(line)
-        if note_id_match:
-            note_id = int(note_id_match.group(1))
+        # Note ID comment
+        id_match = _NOTE_ID_PATTERN.match(line)
+        if id_match:
+            note_id = int(id_match.group(1))
             continue
 
         # Inside code blocks, don't detect field prefixes
@@ -151,87 +123,55 @@ def parse_note_block(block: str) -> ParsedNote:
                 current_content.append(line)
             continue
 
-        new_field = None
+        # Try to match a field prefix
+        matched_field = None
         for prefix, field_name in ALL_PREFIX_TO_FIELD.items():
-            if (
-                line.startswith(prefix + " ")
-                or line.startswith(prefix)
-                and len(line) == len(prefix)
-            ):
-                # Check for duplicate field marker
-                _validate_unique_field(field_name, prefix, seen_fields, note_id)
+            if line.startswith(prefix + " ") or line == prefix:
+                # Duplicate field check
+                if field_name in seen:
+                    ctx = f"in note_id: {note_id}" if note_id else "in this note"
+                    msg = (
+                        f"Duplicate field '{prefix}' {ctx}. "
+                        f"Did you forget to end the previous note with "
+                        f"'\\n\\n---\\n\\n' "
+                        f"or is there an accidental duplicate prefix?"
+                    )
+                    logger.error(msg)
+                    raise ValueError(msg)
 
-                new_field = field_name
-                seen_fields[field_name] = True
+                seen.add(field_name)
                 if current_field:
                     fields[current_field] = "\n".join(current_content).strip()
 
-                if line.startswith(prefix + " "):
-                    current_content = [line[len(prefix) + 1 :]]
-                else:
-                    current_content = []
-                current_field = new_field
+                matched_field = field_name
+                current_content = (
+                    [line[len(prefix) + 1:]] if line.startswith(prefix + " ")
+                    else []
+                )
+                current_field = field_name
                 break
 
-        if new_field is None and current_field:
+        if matched_field is None and current_field:
             current_content.append(line)
 
     if current_field:
         fields[current_field] = "\n".join(current_content).strip()
 
-    note_type = _detect_note_type(fields)
-
     return ParsedNote(
         note_id=note_id,
-        note_type=note_type,
+        note_type=_detect_note_type(fields),
         fields=fields,
         raw_content=block,
     )
 
 
-def _validate_choice_note(note: ParsedNote) -> list[str]:
-    """Validate DeckOpsChoice note answer format and range.
-
-    Returns list of error messages (empty if valid).
-    """
-    errors: list[str] = []
-    answer = note.fields.get("Answer", "")
-    if not answer:
-        return errors
-
-    # Parse answer field - should be int(s) like "1" or "1, 2, 3"
-    answer_parts = [part.strip() for part in answer.strip().split(",")]
-
-    # Validate that all parts are integers
-    try:
-        answer_ints = [int(part) for part in answer_parts]
-    except ValueError:
-        errors.append(
-            "DeckOpsChoice answer (A:) must contain integers "
-            "(e.g. '1' for single choice or '1, 2, 3' for multiple choice)"
-        )
-        return errors
-
-    # Count available choices
-    max_choice = max(
-        (i for i in range(1, 8) if note.fields.get(f"Choice {i}")),
-        default=0
-    )
-
-    # Validate answer range
-    for ans_num in answer_ints:
-        if ans_num < 1 or ans_num > max_choice:
-            errors.append(
-                f"DeckOpsChoice answer contains '{ans_num}' but only "
-                f"{max_choice} choice(s) are provided"
-            )
-            break
-
-    return errors
+# ---------------------------------------------------------------------------
+# Validation
+# ---------------------------------------------------------------------------
 
 
 def validate_note(note: ParsedNote) -> list[str]:
-    """Validate that all mandatory fields for the note type are present.
+    """Validate mandatory fields and note-type-specific rules.
 
     Returns a list of error messages (empty if valid).
     """
@@ -245,7 +185,6 @@ def validate_note(note: ParsedNote) -> list[str]:
         if mandatory and not note.fields.get(field_name):
             errors.append(f"Missing mandatory field '{field_name}' ({prefix})")
 
-    # Cloze notes must contain at least one cloze deletion in the Text field
     if note.note_type == "DeckOpsCloze":
         text = note.fields.get("Text", "")
         if text and not _CLOZE_PATTERN.search(text):
@@ -254,80 +193,86 @@ def validate_note(note: ParsedNote) -> list[str]:
                 "(e.g. {{c1::answer}}) in the T: field"
             )
 
-    # Choice notes must have valid answer format and at least one choice
     if note.note_type == "DeckOpsChoice":
-        errors.extend(_validate_choice_note(note))
+        errors.extend(_validate_choice_answers(note))
 
     return errors
 
 
-def format_note(
-    note_id: int, note: dict, converter, note_type: str = "DeckOpsQA"
-) -> str:
-    note_config = NOTE_TYPES[note_type]
-    field_mappings = note_config["field_mappings"]
+def _validate_choice_answers(note: ParsedNote) -> list[str]:
+    """Validate DeckOpsChoice answer format and range."""
+    answer = note.fields.get("Answer", "")
+    if not answer:
+        return []
 
+    parts = [p.strip() for p in answer.split(",")]
+    try:
+        answer_ints = [int(p) for p in parts]
+    except ValueError:
+        return [
+            "DeckOpsChoice answer (A:) must contain integers "
+            "(e.g. '1' for single choice or '1, 2, 3' for multiple choice)"
+        ]
+
+    max_choice = max(
+        (i for i in range(1, 8) if note.fields.get(f"Choice {i}")),
+        default=0,
+    )
+    for n in answer_ints:
+        if n < 1 or n > max_choice:
+            return [
+                f"DeckOpsChoice answer contains '{n}' but only "
+                f"{max_choice} choice(s) are provided"
+            ]
+    return []
+
+
+# ---------------------------------------------------------------------------
+# Formatting (Anki → Markdown)
+# ---------------------------------------------------------------------------
+
+
+def format_note(
+    note_id: int,
+    note: dict,
+    converter,
+    note_type: str = "DeckOpsQA",
+) -> str:
+    """Format an Anki note dict into a markdown block.
+
+    ``note`` is the raw AnkiConnect notesInfo dict with
+    ``note["fields"]["FieldName"]["value"]`` structure.
+    """
+    field_mappings = NOTE_TYPES[note_type]["field_mappings"]
     lines = [f"<!-- note_id: {note_id} -->"]
-    fields = note["fields"]
 
     for field_name, prefix, mandatory in field_mappings:
-        field_data = fields.get(field_name)
+        field_data = note["fields"].get(field_name)
         if field_data:
-            markdown = converter.convert(field_data.get("value", ""))
-            if markdown or mandatory:
-                lines.append(f"{prefix} {markdown}")
+            md = converter.convert(field_data.get("value", ""))
+            if md or mandatory:
+                lines.append(f"{prefix} {md}")
 
     return "\n".join(lines)
 
 
 def sanitize_filename(deck_name: str) -> str:
-    """Sanitize deck name for use as filename.
+    """Convert deck name to a safe filename (``::`` → ``__``).
 
-    Raises:
-        ValueError: If deck name contains invalid filename characters.
+    Raises ValueError for invalid characters or Windows reserved names.
     """
-    # Check for invalid characters before sanitization
-    invalid_chars = ["/", "\\", "?", "*", "|", '"', "<", ">", ":"]
-    # Note: We allow '::' as it's Anki's hierarchy separator and will be replaced
-    invalid_in_name = [c for c in invalid_chars if c in deck_name and c != ":"]
-
-    if invalid_in_name:
+    invalid = [c for c in r'/\?*|"<>' if c in deck_name and c != ":"]
+    if invalid:
         raise ValueError(
-            f"Deck name '{deck_name}' contains invalid filename characters: {invalid_in_name}\n"
-            f'Please rename the deck in Anki to remove these characters: / \\ ? * | " < >'
+            f"Deck name '{deck_name}' contains invalid filename characters: "
+            f"{invalid}\nPlease rename the deck in Anki to remove these."
         )
 
-    # Check for Windows reserved names
-    reserved_names = [
-        "CON",
-        "PRN",
-        "AUX",
-        "NUL",
-        "COM1",
-        "COM2",
-        "COM3",
-        "COM4",
-        "COM5",
-        "COM6",
-        "COM7",
-        "COM8",
-        "COM9",
-        "LPT1",
-        "LPT2",
-        "LPT3",
-        "LPT4",
-        "LPT5",
-        "LPT6",
-        "LPT7",
-        "LPT8",
-        "LPT9",
-    ]
-    # Get the base name (before any :: hierarchy separators)
-    base_name = deck_name.split("::")[0].upper()
-    if base_name in reserved_names:
+    base = deck_name.split("::")[0].upper()
+    if base in _WINDOWS_RESERVED:
         raise ValueError(
-            f"Deck name '{deck_name}' starts with Windows reserved name '{base_name}'.\n"
-            f"Please rename the deck in Anki to avoid: {', '.join(reserved_names)}"
+            f"Deck name '{deck_name}' starts with Windows reserved name "
+            f"'{base}'.\nPlease rename the deck in Anki."
         )
 
     return deck_name.replace("::", "__")

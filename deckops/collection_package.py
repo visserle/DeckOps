@@ -232,7 +232,7 @@ def package_collection_to_json(
                 continue
 
             try:
-                parsed = parse_note_block(block_text, line_number)
+                parsed = parse_note_block(block_text)
 
                 # Convert to JSON-friendly format
                 note_data = {

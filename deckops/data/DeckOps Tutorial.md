@@ -1,6 +1,7 @@
 Q: Welcome to DeckOps!
-A: Anki decks ↔ Markdown files, in perfect sync.
-M: Neat.
+A: Anki decks ↔ Markdown files, in perfect sync
+E: Edit in your text editor, review in Anki.
+M: Neat!
 
 ---
 
@@ -13,6 +14,7 @@ C1: A multiple choice question
 C2: with
 C3: automatically randomized answers.
 A: 1,3
+E: The order changes dynamically with every review.
 
 ---
 

@@ -356,6 +356,24 @@ class TestRoundTripBlockquotes:
             or "<br><blockquote>" in restored_html
         )
 
+    def test_separate_blockquotes_roundtrip(self, md_to_html, html_to_md):
+        """Test that two separate blockquotes separated by a blank line round-trip correctly."""
+        original_html = "<blockquote>xxx</blockquote><br><br><blockquote>xxx</blockquote>"
+        md = html_to_md.convert(original_html)
+        restored_html = md_to_html.convert(md)
+
+        # Both blockquotes are preserved as separate elements
+        assert restored_html.count("<blockquote>") == 2
+        assert restored_html.count("xxx") == 2
+
+        # Verify stability across multiple round-trips
+        md2 = html_to_md.convert(restored_html)
+        html2 = md_to_html.convert(md2)
+        md3 = html_to_md.convert(html2)
+        assert md == md2 == md3, (
+            "Separate blockquotes should be stable across round-trips"
+        )
+
     def test_blockquote_roundtrip_stability(self, md_to_html, html_to_md):
         """Test that blockquotes don't oscillate between round trips.
 

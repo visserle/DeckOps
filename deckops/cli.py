@@ -4,11 +4,8 @@ from pathlib import Path
 
 from deckops.anki_client import invoke
 from deckops.anki_to_markdown import (
-    delete_orphaned_decks,
-    delete_orphaned_notes,
-    rename_markdown_files,
-    transcribe_collection,
-    transcribe_deck,
+    export_collection,
+    export_deck,
 )
 from deckops.collection_package import (
     package_collection_to_json,
@@ -20,7 +17,6 @@ from deckops.git import git_snapshot
 from deckops.init import create_tutorial, initialize_collection
 from deckops.log import configure_logging
 from deckops.markdown_to_anki import (
-    delete_untracked_notes,
     import_collection,
     import_file,
 )
@@ -70,29 +66,26 @@ def run_am(args):
 
     if args.deck:
         logger.info(f"Processing deck: {args.deck}...")
-        deck_names_and_ids = invoke("deckNamesAndIds")
-        deck_id = deck_names_and_ids.get(args.deck)
-        result = transcribe_deck(
-            args.deck, output_dir=str(collection_dir), deck_id=deck_id
-        )
+        result = export_deck(args.deck, output_dir=str(collection_dir))
         results = [result] if result.file_path else []
         renamed_files = 0
+        deleted_decks = 0
+        deleted_notes = 0
     else:
-        renamed_files = rename_markdown_files(output_dir=str(collection_dir))
-        results = transcribe_collection(output_dir=str(collection_dir))
+        summary = export_collection(
+            output_dir=str(collection_dir),
+            keep_orphans=args.keep_orphans,
+        )
+        results = summary.deck_results
+        renamed_files = summary.renamed_files
+        deleted_decks = summary.deleted_deck_files
+        deleted_notes = summary.deleted_orphan_notes
 
     total = sum(r.total_notes for r in results)
     updated = sum(r.updated for r in results)
     created = sum(r.created for r in results)
     deleted = sum(r.deleted for r in results)
     skipped = sum(r.skipped for r in results)
-
-    if not args.keep_orphans and not args.deck:
-        deleted_decks = delete_orphaned_decks(output_dir=str(collection_dir))
-        deleted_notes = delete_orphaned_notes(output_dir=str(collection_dir))
-    else:
-        deleted_decks = 0
-        deleted_notes = 0
 
     logger.info(f"{'=' * 60}")
     logger.info(f"Export complete: {len(results)} files processed")
@@ -130,13 +123,44 @@ def run_ma(args):
             )
         ]
     else:
-        results = import_collection(str(collection_dir), only_add_new=args.only_add_new)
-        deleted_notes = delete_untracked_notes(collection_dir=str(collection_dir))
+        summary = import_collection(str(collection_dir), only_add_new=args.only_add_new)
+        results = summary.file_results
+
+        # Handle untracked decks (DeckOps notes in Anki with no markdown file)
+        if summary.untracked_decks:
+            logger.warning(
+                "The following Anki decks with DeckOps notes inside "
+                "have no matching markdown file:"
+            )
+            for ud in summary.untracked_decks:
+                logger.warning(
+                    f"  - '{ud.deck_name}' "
+                    f"(deck_id: {ud.deck_id}, {len(ud.note_ids)} managed notes)"
+                )
+            answer = (
+                input(
+                    "Delete these managed notes from Anki "
+                    "(only DeckOps notes will be removed)? [y/N] "
+                )
+                .strip()
+                .lower()
+            )
+            if answer == "y":
+                for ud in summary.untracked_decks:
+                    invoke("deleteNotes", notes=ud.note_ids)
+                    deleted_notes += len(ud.note_ids)
+                    logger.info(
+                        f"  Deleted {len(ud.note_ids)} managed notes from "
+                        f"'{ud.deck_name}' (deck_id: {ud.deck_id})"
+                    )
+            else:
+                logger.info("Skipped untracked note deletion.")
 
     total = sum(r.total_notes for r in results)
     updated = sum(r.updated for r in results)
     created = sum(r.created for r in results)
     deleted = sum(r.deleted for r in results)
+    moved = sum(r.moved for r in results)
     skipped = sum(r.skipped for r in results)
     errors = sum(len(r.errors) for r in results)
 
@@ -145,15 +169,16 @@ def run_ma(args):
     logger.info(f"Total notes: {total}")
     logger.info(
         f"Updated: {updated}, Created: {created}, "
-        f"Deleted: {deleted}, Skipped: {skipped}, "
-        f"Errors: {errors}"
+        f"Deleted: {deleted}, Moved: {moved}, "
+        f"Skipped: {skipped}, Errors: {errors}"
     )
     if deleted_notes:
         logger.info(f"Deleted: {deleted_notes} managed note(s) from untracked decks")
     if errors:
-        logger.critical(
-            "Error(s) occurred during import. Review and resolve them to ensure "
-            "all notes remain properly tracked in future exports."
+        logger.error(
+            "Error(s) occurred during import. Details are logged above. Review, "
+            "resolve, and re-run the import or you risk losing notes with the next "
+            "export."
         )
 
 

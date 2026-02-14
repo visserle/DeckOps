@@ -280,6 +280,22 @@ class TestRoundTripBlockquotes:
         assert "**Bold**" in restored_md
         assert "*italic*" in restored_md
 
+    def test_separate_blockquotes_roundtrip(self, html_to_md, md_to_html):
+        """Test that two separate blockquotes separated by a blank line round-trip correctly."""
+        original_md = "> xxx\n\n> xxx"
+        html = md_to_html.convert(original_md)
+        restored_md = html_to_md.convert(html)
+        assert restored_md.strip() == original_md
+
+        # Verify stability across multiple round-trips
+        html2 = md_to_html.convert(restored_md)
+        restored_md2 = html_to_md.convert(html2)
+        html3 = md_to_html.convert(restored_md2)
+        restored_md3 = html_to_md.convert(html3)
+        assert restored_md == restored_md2 == restored_md3, (
+            "Separate blockquotes should be stable across round-trips"
+        )
+
     def test_blockquote_spacing_preserved_in_markdown(self, html_to_md, md_to_html):
         """Test that markdown properly formats blockquotes with spacing.
 

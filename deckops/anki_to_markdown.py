@@ -1,11 +1,18 @@
-"""Transcribe Anki decks to Markdown files."""
+"""Export Anki decks to Markdown files.
+
+Architecture:
+  AnkiState   – all Anki-side data, fetched once (shared from anki_client)
+  FileState   – one existing markdown file, read once
+  _sync_deck  – single engine: diff existing file vs Anki state, return new content
+  export_collection – orchestrates: rename → sync → delete orphans (one pass)
+"""
 
 import logging
 import re
 from dataclasses import dataclass
 from pathlib import Path
 
-from deckops.anki_client import invoke
+from deckops.anki_client import AnkiState
 from deckops.config import NOTE_SEPARATOR, SUPPORTED_NOTE_TYPES
 from deckops.html_converter import HTMLToMarkdown
 from deckops.markdown_helpers import (
@@ -18,6 +25,11 @@ from deckops.markdown_helpers import (
 logger = logging.getLogger(__name__)
 
 
+# ---------------------------------------------------------------------------
+# Data classes
+# ---------------------------------------------------------------------------
+
+
 @dataclass
 class DeckExportResult:
     """Result of exporting a single deck."""
@@ -28,55 +40,91 @@ class DeckExportResult:
     updated: int
     created: int
     deleted: int
+    moved: int
     skipped: int
-    # Block IDs (e.g. "note_id: 123") that appeared/disappeared
-    # compared to the previous file, used for cross-deck move detection.
-    created_ids: set[str] | None = None
-    deleted_ids: set[str] | None = None
+    renamed_from: str | None = None
 
 
-def transcribe_deck(
-    deck_name: str, output_dir: str = ".", deck_id: int | None = None
-) -> DeckExportResult:
-    """Transcribe an Anki deck to a Markdown file (excluding subdecks)."""
-    converter = HTMLToMarkdown()
-    # Collect (note_id, formatted_block) tuples.
-    # In Anki the note ID is the UNIX timestamp in milliseconds.
-    blocks_with_ids: list[tuple[int, str]] = []
+@dataclass
+class ExportSummary:
+    """Aggregate result of a full collection export."""
 
-    for note_type in SUPPORTED_NOTE_TYPES:
-        query = f'deck:"{deck_name}" -deck:"{deck_name}::*" note:{note_type}'
-        card_ids = invoke("findCards", query=query)
+    deck_results: list[DeckExportResult]
+    renamed_files: int
+    deleted_deck_files: int
+    deleted_orphan_notes: int
 
-        if not card_ids:
-            continue
 
-        cards_info = invoke("cardsInfo", cards=card_ids)
-        note_ids = list({card["note"] for card in cards_info})
-        notes_info = invoke("notesInfo", notes=note_ids)
+@dataclass
+class FileState:
+    """Existing markdown file content, read once."""
 
-        for note in notes_info:
-            blocks_with_ids.append(
-                (
-                    note["noteId"],
-                    format_note(
-                        note["noteId"],
-                        note,
-                        converter,
-                        note_type=note_type,
-                    ),
-                )
-            )
+    file_path: Path
+    raw_content: str
+    deck_id: int | None
+    existing_blocks: dict[str, str]  # "note_id: 123" -> block content
 
-    # Build a lookup from block ID string to (note_id, formatted_block)
+    @staticmethod
+    def from_file(file_path: Path) -> "FileState":
+        raw_content = file_path.read_text(encoding="utf-8")
+        deck_id, _ = extract_deck_id(raw_content)
+        existing_blocks = extract_note_blocks(raw_content)
+        return FileState(
+            file_path=file_path,
+            raw_content=raw_content,
+            deck_id=deck_id,
+            existing_blocks=existing_blocks,
+        )
+
+
+# ---------------------------------------------------------------------------
+# Sync engine
+# ---------------------------------------------------------------------------
+
+
+def _format_blocks(
+    note_ids: set[int],
+    anki: AnkiState,
+    converter: HTMLToMarkdown,
+) -> dict[str, tuple[int, str]]:
+    """Format Anki notes into markdown blocks.
+
+    Returns {block_id_key: (note_id, formatted_block)}.
+    """
     block_by_id: dict[str, tuple[int, str]] = {}
-    for note_id, block in blocks_with_ids:
+
+    for nid in note_ids:
+        note = anki.notes.get(nid)
+        if not note:
+            continue
+        note_type = note.get("modelName", "")
+        if note_type not in SUPPORTED_NOTE_TYPES:
+            continue
+        block = format_note(nid, note, converter, note_type=note_type)
         match = re.match(r"<!--\s*(note_id:\s*\d+)\s*-->", block)
         if match:
             key = re.sub(r"\s+", " ", match.group(1))
-            block_by_id[key] = (note_id, block)
+            block_by_id[key] = (nid, block)
 
-    if not blocks_with_ids:
+    return block_by_id
+
+
+def _sync_deck(
+    deck_name: str,
+    deck_id: int,
+    anki: AnkiState,
+    converter: HTMLToMarkdown,
+    existing_file: FileState | None,
+) -> tuple[DeckExportResult, str | None]:
+    """Synchronize one Anki deck to markdown content.
+
+    Returns (result, new_content). new_content is None if the deck
+    is empty (no notes to export).
+    """
+    note_ids = anki.deck_note_ids.get(deck_name, set())
+    block_by_id = _format_blocks(note_ids, anki, converter)
+
+    if not block_by_id:
         return DeckExportResult(
             deck_name=deck_name,
             file_path=None,
@@ -84,32 +132,24 @@ def transcribe_deck(
             updated=0,
             created=0,
             deleted=0,
+            moved=0,
             skipped=0,
-        )
+        ), None
 
-    output_path = Path(output_dir) / (sanitize_filename(deck_name) + ".md")
-    deck_id_line = "<!-- deck_id: {} -->".format(deck_id) + "\n" if deck_id else ""
+    deck_id_line = f"<!-- deck_id: {deck_id} -->\n"
 
-    # Compare with existing file to determine per-note changes
     updated = 0
     created = 0
     deleted = 0
     skipped = 0
-    created_ids: set[str] = set()
-    deleted_ids: set[str] = set()
+    moved = 0
 
-    old_content = (
-        output_path.read_text(encoding="utf-8") if output_path.exists() else None
-    )
-
-    if old_content is not None:
-        existing_blocks = extract_note_blocks(old_content)
-
-        # Preserve existing file order; append new notes sorted by creation date.
+    if existing_file is not None:
+        existing_blocks = existing_file.existing_blocks
         new_block_ids = set(block_by_id.keys())
         ordered_blocks: list[str] = []
 
-        # Keep existing notes in their current order, updating content
+        # Preserve existing order, updating content
         for block_id in existing_blocks:
             if block_id in block_by_id:
                 _, block = block_by_id[block_id]
@@ -120,95 +160,187 @@ def transcribe_deck(
                     updated += 1
             else:
                 deleted += 1
-                deleted_ids.add(block_id)
 
-        # Append genuinely new notes, sorted by creation date among themselves
+        # Append genuinely new notes, sorted by creation date
         new_ids = new_block_ids - set(existing_blocks)
         new_entries = sorted(
             ((bid, *block_by_id[bid]) for bid in new_ids),
             key=lambda x: x[1],  # sort by note_id (creation timestamp)
         )
-        for bid, _, block in new_entries:
+        for _, _, block in new_entries:
             ordered_blocks.append(block)
             created += 1
-            created_ids.add(bid)
 
         markdown_blocks = ordered_blocks
     else:
-        # First export for this deck: sort by creation date (chronological).
-        blocks_with_ids.sort(key=lambda x: x[0])
-        markdown_blocks = [block for _, block in blocks_with_ids]
+        # First export: sort by creation date
+        sorted_blocks = sorted(block_by_id.values(), key=lambda x: x[0])
+        markdown_blocks = [block for _, block in sorted_blocks]
         created = len(markdown_blocks)
 
-    notes_content = NOTE_SEPARATOR.join(markdown_blocks)
-    new_content = deck_id_line + notes_content
+    new_content = deck_id_line + NOTE_SEPARATOR.join(markdown_blocks)
 
-    # Only write if content actually changed
-    if old_content != new_content:
-        output_path.write_text(new_content, encoding="utf-8")
-
-    logger.debug(f"{deck_name}: {len(markdown_blocks)} blocks -> {output_path.name}")
-    return DeckExportResult(
+    result = DeckExportResult(
         deck_name=deck_name,
-        file_path=output_path,
+        file_path=None,  # Set by caller after writing
         total_notes=len(markdown_blocks),
         updated=updated,
         created=created,
         deleted=deleted,
+        moved=moved,
         skipped=skipped,
-        created_ids=created_ids,
-        deleted_ids=deleted_ids,
+    )
+    return result, new_content
+
+
+# ---------------------------------------------------------------------------
+# Public API
+# ---------------------------------------------------------------------------
+
+
+def export_deck(
+    deck_name: str,
+    output_dir: str = ".",
+    deck_id: int | None = None,
+) -> DeckExportResult:
+    """Export a single Anki deck to a Markdown file."""
+    anki = AnkiState.fetch()
+    converter = HTMLToMarkdown()
+
+    if deck_id is None:
+        deck_id = anki.deck_names_and_ids.get(deck_name)
+    if deck_id is None:
+        raise ValueError(f"Deck '{deck_name}' not found in Anki")
+
+    output_path = Path(output_dir) / (sanitize_filename(deck_name) + ".md")
+    existing_file = FileState.from_file(output_path) if output_path.exists() else None
+
+    result, new_content = _sync_deck(
+        deck_name, deck_id, anki, converter, existing_file
     )
 
+    if new_content is not None:
+        old_content = existing_file.raw_content if existing_file else None
+        if old_content != new_content:
+            output_path.write_text(new_content, encoding="utf-8")
+        result.file_path = output_path
 
-def _find_relevant_decks() -> set[str]:
-    """Return deck names that contain DeckOpsQA or DeckOpsCloze notes."""
-    query = " OR ".join(f"note:{nt}" for nt in SUPPORTED_NOTE_TYPES)
-    card_ids = invoke("findCards", query=query)
-    if not card_ids:
-        return set()
-    cards_info = invoke("cardsInfo", cards=card_ids)
-    return {card["deckName"] for card in cards_info}
+    return result
 
 
-def transcribe_collection(output_dir: str = ".") -> list[DeckExportResult]:
-    """Transcribe all decks in the collection to Markdown files."""
-    deck_names_and_ids = invoke("deckNamesAndIds")
-    relevant_decks = _find_relevant_decks()
+def export_collection(
+    output_dir: str = ".",
+    keep_orphans: bool = False,
+) -> ExportSummary:
+    """Export all Anki decks to Markdown files in a single pass.
 
-    # Don't count the "default" deck if empty (has no cards)
-    # and there are other decks in the collection
-    total_decks = len(deck_names_and_ids)
-    if total_decks > 1:
-        default_card_ids = invoke(
-            "findCards", query='deck:"default" -deck:"default::*"'
-        )
-        if not default_card_ids:
-            total_decks -= 1
+    Orchestrates the entire export:
+      1. Fetch all Anki state (3-4 API calls)
+      2. Read all existing markdown files (one read each)
+      3. Rename files for decks renamed in Anki
+      4. Sync each relevant deck
+      5. Delete orphaned deck files (deck_id not in Anki)
+      6. Delete orphaned notes (note_id not in Anki)
 
+    Returns an ExportSummary with all results.
+    """
+    output_path = Path(output_dir)
+
+    # Phase 1: Fetch all Anki state
+    anki = AnkiState.fetch()
+    converter = HTMLToMarkdown()
+    all_note_ids = set(anki.notes.keys())
+
+    # Phase 2: Read all existing markdown files
+    files_by_deck_id: dict[int, FileState] = {}
+    files_by_path: dict[Path, FileState] = {}
+    unlinked_files: list[FileState] = []  # Files without a deck_id
+
+    for md_file in output_path.glob("*.md"):
+        fs = FileState.from_file(md_file)
+        files_by_path[md_file] = fs
+        if fs.deck_id is not None:
+            files_by_deck_id[fs.deck_id] = fs
+        else:
+            unlinked_files.append(fs)
+
+    # Phase 3: Rename files for decks renamed in Anki
+    renamed_files = 0
+    for deck_id, fs in list(files_by_deck_id.items()):
+        if deck_id not in anki.id_to_deck_name:
+            continue
+        expected_name = sanitize_filename(anki.id_to_deck_name[deck_id]) + ".md"
+        if fs.file_path.name != expected_name:
+            new_path = fs.file_path.parent / expected_name
+            logger.info(f"  Renamed {fs.file_path.name} -> {expected_name}")
+            fs.file_path.rename(new_path)
+            # Update references to the new path
+            del files_by_path[fs.file_path]
+            fs = FileState(
+                file_path=new_path,
+                raw_content=fs.raw_content,
+                deck_id=fs.deck_id,
+                existing_blocks=fs.existing_blocks,
+            )
+            files_by_deck_id[deck_id] = fs
+            files_by_path[new_path] = fs
+            renamed_files += 1
+
+    # Phase 4: Determine relevant decks
+    # A deck is relevant if it has DeckOps notes OR has an existing file
+    relevant_decks: set[str] = set()
+    for deck_name in anki.deck_note_ids:
+        relevant_decks.add(deck_name)
+    for deck_id, fs in files_by_deck_id.items():
+        if deck_id in anki.id_to_deck_name:
+            relevant_decks.add(anki.id_to_deck_name[deck_id])
+
+    # Log deck count (skip empty default deck)
+    total_decks = len(anki.deck_names_and_ids)
+    if total_decks > 1 and not anki.deck_note_ids.get("default"):
+        total_decks -= 1
     logger.info(
         f"Found {total_decks} decks, {len(relevant_decks)} with supported note types"
     )
 
-    # Also include decks that have existing markdown files (they may
-    # have become empty after cards moved out and need updating).
-    output_path = Path(output_dir)
-    id_to_name = {v: k for k, v in deck_names_and_ids.items()}
-    for md_file in output_path.glob("*.md"):
-        content = md_file.read_text(encoding="utf-8")
-        deck_id, _ = extract_deck_id(content)
-        if deck_id and deck_id in id_to_name:
-            relevant_decks.add(id_to_name[deck_id])
+    # Phase 5: Sync each relevant deck
+    deck_results: list[DeckExportResult] = []
+    all_created_ids: set[str] = set()
+    all_deleted_ids: set[str] = set()
 
-    results = []
-    for deck_name in sorted(deck_names_and_ids):
+    for deck_name in sorted(anki.deck_names_and_ids):
         if deck_name not in relevant_decks:
             continue
-        deck_id = deck_names_and_ids[deck_name]
+
+        deck_id = anki.deck_names_and_ids[deck_name]
+        existing_file = files_by_deck_id.get(deck_id)
+
         logger.info(f"Processing {deck_name} (id: {deck_id})...")
-        result = transcribe_deck(deck_name, output_dir, deck_id=deck_id)
-        if result.file_path:
-            results.append(result)
+        result, new_content = _sync_deck(
+            deck_name, deck_id, anki, converter, existing_file
+        )
+
+        if new_content is not None:
+            file_path = output_path / (sanitize_filename(deck_name) + ".md")
+            old_content = existing_file.raw_content if existing_file else None
+            if old_content != new_content:
+                file_path.write_text(new_content, encoding="utf-8")
+            result.file_path = file_path
+            deck_results.append(result)
+
+            # Track created/deleted IDs for move detection
+            new_block_ids = set()
+            for line in new_content.split("\n"):
+                m = re.match(r"<!--\s*(note_id:\s*\d+)\s*-->", line)
+                if m:
+                    new_block_ids.add(re.sub(r"\s+", " ", m.group(1)))
+
+            if existing_file:
+                old_block_ids = set(existing_file.existing_blocks.keys())
+                created_ids = new_block_ids - old_block_ids
+                deleted_ids = old_block_ids - new_block_ids
+                all_created_ids.update(created_ids)
+                all_deleted_ids.update(deleted_ids)
 
         if result.total_notes > 0:
             logger.info(
@@ -216,116 +348,73 @@ def transcribe_collection(output_dir: str = ".") -> list[DeckExportResult]:
                 f"Deleted: {result.deleted}, Skipped: {result.skipped}"
             )
 
-    # Check for cross-deck moves: a note ID that disappeared from
-    # one file and appeared in another was moved between decks in Anki.
-    all_created_ids: set[str] = set()
-    all_deleted_ids: set[str] = set()
-    for r in results:
-        all_created_ids.update(r.created_ids or set())
-        all_deleted_ids.update(r.deleted_ids or set())
-    moved = len(all_created_ids & all_deleted_ids)
-    if moved:
+    # Detect cross-deck moves
+    moved_ids = all_created_ids & all_deleted_ids
+    if moved_ids:
         logger.info(
-            f"  Note: {moved} of the above created/deleted note(s) were "
+            f"  Note: {len(moved_ids)} of the above created/deleted note(s) were "
             f"moved between decks (review history is preserved)"
         )
 
-    return results
+    # Phase 6: Delete orphaned deck files and notes
+    deleted_deck_files = 0
+    deleted_orphan_notes = 0
 
+    if not keep_orphans:
+        anki_deck_ids = set(anki.deck_names_and_ids.values())
 
-def rename_markdown_files(output_dir: str = ".") -> int:
-    """Rename markdown files to match their Anki deck name via deck_id.
+        # Delete files whose deck_id doesn't exist in Anki
+        for deck_id, fs in files_by_deck_id.items():
+            if deck_id not in anki_deck_ids:
+                logger.info(
+                    f"  Deleting orphaned deck file "
+                    f"{fs.file_path.name} (deck_id: {deck_id})"
+                )
+                fs.file_path.unlink()
+                deleted_deck_files += 1
 
-    If a deck was renamed in Anki, the corresponding markdown file is
-    renamed to reflect the new deck name.  The deck_id inside the file
-    is used to link the file to its deck.
-    Returns the number of renamed files.
-    """
-    deck_names_and_ids = invoke("deckNamesAndIds")
-    id_to_name = {v: k for k, v in deck_names_and_ids.items()}
-    renamed = 0
-
-    for md_file in Path(output_dir).glob("*.md"):
-        content = md_file.read_text(encoding="utf-8")
-        deck_id, _ = extract_deck_id(content)
-        if deck_id is None or deck_id not in id_to_name:
-            continue
-
-        expected_filename = sanitize_filename(id_to_name[deck_id]) + ".md"
-        if md_file.name != expected_filename:
-            new_path = md_file.parent / expected_filename
-            logger.info(f"  Renamed {md_file.name} -> {expected_filename}")
-            md_file.rename(new_path)
-            renamed += 1
-
-    return renamed
-
-
-def delete_orphaned_decks(output_dir: str = ".") -> int:
-    """Delete markdown files whose deck_id is not found in Anki.
-
-    Files without a deck_id are kept (they are likely new decks pending first sync).
-    Returns the number of deleted files.
-    """
-    anki_deck_ids = set(invoke("deckNamesAndIds").values())
-    deleted = 0
-
-    for md_file in Path(output_dir).glob("*.md"):
-        content = md_file.read_text(encoding="utf-8")
-        deck_id, _ = extract_deck_id(content)
-        if deck_id is not None and deck_id not in anki_deck_ids:
-            logger.info(
-                f"  Deleting orphaned deck file {md_file.name} (deck_id: {deck_id})"
+        # Delete notes from markdown files whose note_id isn't in Anki
+        for md_file in output_path.glob("*.md"):
+            # Re-read files that were just written (content may have changed)
+            content = md_file.read_text(encoding="utf-8")
+            deck_id_match = re.match(
+                r"(<!--\s*deck_id:\s*\d+\s*-->\n?)", content
             )
-            md_file.unlink()
-            deleted += 1
+            deck_id_prefix = deck_id_match.group(1) if deck_id_match else ""
+            _, cards_content = extract_deck_id(content)
 
-    return deleted
+            blocks = cards_content.split(NOTE_SEPARATOR)
+            kept: list[str] = []
+            deleted = 0
 
-
-def delete_orphaned_notes(output_dir: str = ".") -> int:
-    """Delete notes from markdown files whose IDs are not found in Anki.
-
-    Notes without an ID are kept (they are new notes pending first sync).
-    Returns the total number of deleted blocks.
-    """
-    # Get all note IDs across all supported note types
-    anki_note_ids: set[int] = set()
-    for note_type in SUPPORTED_NOTE_TYPES:
-        note_ids = invoke("findNotes", query=f"note:{note_type}")
-        anki_note_ids.update(note_ids)
-
-    total_deleted = 0
-
-    for md_file in Path(output_dir).glob("*.md"):
-        content = md_file.read_text(encoding="utf-8")
-        deck_id_line_match = re.match(r"(<!--\s*deck_id:\s*\d+\s*-->\n?)", content)
-        deck_id_prefix = deck_id_line_match.group(1) if deck_id_line_match else ""
-        _, cards_content = extract_deck_id(content)
-
-        blocks = cards_content.split(NOTE_SEPARATOR)
-        kept: list[str] = []
-        deleted = 0
-
-        for block in blocks:
-            stripped = block.strip()
-            if not stripped:
-                continue
-
-            note_match = re.match(r"<!--\s*note_id:\s*(\d+)\s*-->", stripped)
-            if note_match:
-                note_id = int(note_match.group(1))
-                if note_id not in anki_note_ids:
-                    deleted += 1
-                    logger.info(f"  Deleting note {note_id} from {md_file.name}")
+            for block in blocks:
+                stripped = block.strip()
+                if not stripped:
                     continue
+                note_match = re.match(
+                    r"<!--\s*note_id:\s*(\d+)\s*-->", stripped
+                )
+                if note_match:
+                    nid = int(note_match.group(1))
+                    if nid not in all_note_ids:
+                        deleted += 1
+                        logger.info(
+                            f"  Deleting note {nid} from {md_file.name}"
+                        )
+                        continue
+                kept.append(stripped)
 
-            kept.append(stripped)
+            if deleted > 0:
+                new_content = deck_id_prefix + NOTE_SEPARATOR.join(kept)
+                md_file.write_text(new_content, encoding="utf-8")
+                logger.info(
+                    f"{md_file.name}: deleted {deleted} orphaned block(s)"
+                )
+                deleted_orphan_notes += deleted
 
-        if deleted > 0:
-            new_content = deck_id_prefix + NOTE_SEPARATOR.join(kept)
-            md_file.write_text(new_content, encoding="utf-8")
-            logger.info(f"{md_file.name}: deleted {deleted} orphaned block(s)")
-            total_deleted += deleted
-
-    return total_deleted
+    return ExportSummary(
+        deck_results=deck_results,
+        renamed_files=renamed_files,
+        deleted_deck_files=deleted_deck_files,
+        deleted_orphan_notes=deleted_orphan_notes,
+    )
