@@ -64,7 +64,7 @@ class AnkiRenderer(mistune.HTMLRenderer):
     Only overrides methods where Anki's HTML model differs from standard:
     - No <p> wrapping (Anki uses <br> between blocks).
     - media/ prefix stripping on images
-    - --> arrow replacement
+    - --> and ==> arrow replacements
     - Syntax highlighting via Pygments
     """
 
@@ -90,7 +90,7 @@ class AnkiRenderer(mistune.HTMLRenderer):
         return html
 
     def text(self, text):
-        return text.replace("-->", "\u2192")
+        return text.replace("-->", "\u2192").replace("==>", "\u21d2")
 
     def softbreak(self):
         return "<br>"

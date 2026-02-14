@@ -154,8 +154,8 @@ class HTMLToMarkdown:
         # Restore as escaped characters
         md = _restore_escaped_chars(md)
 
-        # Arrow replacement (Anki stores --> as →)
-        md = md.replace("\u2192", "-->")
+        # Arrow replacements (convert Unicode arrows back to ASCII)
+        md = md.replace("\u2192", "-->").replace("\u21d2", "==>")
         # Collapse excessive newlines
         md = re.sub(r"\n{3,}", "\n\n", md)
 
