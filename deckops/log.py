@@ -6,6 +6,24 @@ import sys
 from pathlib import Path
 
 
+def format_changes(**counts: int) -> str:
+    """Format non-zero change counts into a compact string.
+
+    >>> format_changes(updated=3, created=1, deleted=0, skipped=96)
+    '3 updated, 1 created'
+    >>> format_changes(skipped=10)
+    'no changes'
+    """
+    parts = []
+    for k, v in counts.items():
+        if not v:
+            continue
+        # Singularize nouns (e.g. "1 errors" → "1 error")
+        label = k[:-1] if v == 1 and k.endswith("s") else k
+        parts.append(f"{v} {label}")
+    return ", ".join(parts) if parts else "no changes"
+
+
 def configure_logging(
     stream_level: int = logging.DEBUG,
     file_level: int = logging.DEBUG,
@@ -37,13 +55,21 @@ def configure_logging(
     if stream:
         stream_handler = logging.StreamHandler(sys.stdout)
         stream_handler.setLevel(stream_level)
-        stream_format = "{asctime}"
-        stream_format += " | {color}{levelname:8}{reset}| {name} | {message}"
-        stream_formatter = ColoredFormatter(
-            stream_format,
-            style="{",
-            datefmt="%H:%M:%S",
-        )
+
+        if stream_level <= logging.DEBUG:
+            # Verbose format for debug mode
+            stream_format = (
+                "{asctime} | {color}{levelname:8}{reset} | {name} | {message}"
+            )
+            stream_formatter = ColoredFormatter(
+                stream_format,
+                style="{",
+                datefmt="%H:%M:%S",
+            )
+        else:
+            # Clean format for normal CLI use
+            stream_formatter = CleanFormatter()
+
         stream_handler.setFormatter(stream_formatter)
         handlers.append(stream_handler)
 
@@ -134,6 +160,21 @@ class ColoredFormatter(logging.Formatter):
         record.color = self.colors.get(record.levelname, "")
         record.reset = self.colors["RESET"]
         return super().format(record)
+
+
+class CleanFormatter(logging.Formatter):
+    """Minimal formatter for CLI output — message only, color for warnings/errors."""
+
+    LEVEL_COLORS = {
+        "WARNING": Color.YELLOW,
+        "ERROR": Color.RED,
+        "CRITICAL": Color.BOLD_RED,
+    }
+
+    def format(self, record) -> str:
+        color = self.LEVEL_COLORS.get(record.levelname, "")
+        reset = Color.END if color else ""
+        return f"{color}{record.getMessage()}{reset}"
 
 
 def main():

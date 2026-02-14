@@ -59,5 +59,5 @@ def git_snapshot(collection_dir: Path, label: str) -> bool:
         logger.warning(f"Auto-commit failed: {e}")
         return False
     except FileNotFoundError:
-        logger.info("Git not found, skipping auto-commit")
+        logger.debug("Git not found, skipping auto-commit")
         return False

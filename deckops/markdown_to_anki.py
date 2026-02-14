@@ -13,6 +13,7 @@ from pathlib import Path
 
 from deckops.anki_client import AnkiState, invoke
 from deckops.config import NOTE_SEPARATOR
+from deckops.log import format_changes
 from deckops.markdown_converter import MarkdownToHTML
 from deckops.markdown_helpers import (
     ParsedNote,
@@ -292,8 +293,8 @@ def _sync_file(
                     nid = card["note"]
                     if nid not in moved_notes:
                         moved_notes.add(nid)
-                        logger.info(
-                            f"  Moved note {nid} from "
+                        logger.debug(
+                            f"Moved note {nid} from "
                             f"'{card['deckName']}' to '{deck_name}'"
                         )
             result.moved += len(moved_notes)
@@ -311,8 +312,8 @@ def _sync_file(
     for note, html_fields in existing:
         raw = anki.notes.get(note.note_id)  # type: ignore[arg-type]
         if not raw or not raw.get("fields"):
-            logger.info(
-                f"  Note {note.note_id} ({note_identifier(note)}) "
+            logger.debug(
+                f"Note {note.note_id} ({note_identifier(note)}) "
                 f"no longer in Anki, will re-create"
             )
             stale.append((note, html_fields))
@@ -369,8 +370,8 @@ def _sync_file(
                 if c["note"] == nid and c["deckName"] == deck_name
             ]
             cid_str = ", ".join(str(c) for c in cids)
-            logger.info(
-                f"  Deleted {model} note {nid}"
+            logger.debug(
+                f"Deleted {model} note {nid}"
                 f"{f' (cards {cid_str})' if cid_str else ''}"
                 f" from Anki"
             )
@@ -517,7 +518,7 @@ def import_collection(
     pending_writes: list[_PendingWrite] = []
 
     for fs in file_states:
-        logger.info(f"Processing {fs.file_path.name}...")
+        logger.debug(f"Processing {fs.file_path.name}...")
         file_result, pending = _sync_file(
             fs,
             anki,
@@ -528,12 +529,13 @@ def import_collection(
         results.append(file_result)
         pending_writes.append(pending)
 
-        logger.info(
-            f"  Updated: {file_result.updated}, Created: {file_result.created}"
-            f", Deleted: {file_result.deleted}, Moved: {file_result.moved}"
-            f", Skipped: {file_result.skipped}"
-            f", Errors: {len(file_result.errors)}"
+        changes = format_changes(
+            updated=file_result.updated, created=file_result.created,
+            deleted=file_result.deleted, moved=file_result.moved,
+            errors=len(file_result.errors),
         )
+        if changes != "no changes":
+            logger.info(f"  {fs.file_path.name}: {changes}")
         for error in file_result.errors:
             logger.error(f"  {error}")
 

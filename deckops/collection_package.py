@@ -204,10 +204,10 @@ def package_collection_to_json(
 
     # Process all markdown files in collection
     md_files = sorted(collection_dir.glob("*.md"))
-    logger.info(f"Found {len(md_files)} deck file(s) to package")
+    logger.debug(f"Found {len(md_files)} deck file(s) to package")
 
     for md_file in md_files:
-        logger.info(f"Processing {md_file.name}...")
+        logger.debug(f"Processing {md_file.name}...")
         content = md_file.read_text()
 
         # Extract deck_id and remaining content
@@ -274,7 +274,7 @@ def package_collection_to_json(
         if not output_file.suffix == ".zip":
             output_file = output_file.with_suffix(".zip")
 
-        logger.info(f"Found {len(all_media_files)} media file(s) to include")
+        logger.debug(f"Found {len(all_media_files)} media file(s) to include")
 
         # Get media directory from config
         if not media_dir_path:
@@ -303,21 +303,24 @@ def package_collection_to_json(
                         logger.warning(f"Media file not found: {media_path}")
 
                 total_media = len(all_media_files)
-                logger.info(f"Included {copied_count}/{total_media} media files")
+                logger.debug(f"Included {copied_count}/{total_media} media files")
 
-            package_msg = f"Packaged {total_decks} deck(s) with {total_notes} note(s)"
-            logger.info(f"{package_msg} to {output_file}")
+            logger.info(
+                f"Packaged {total_decks} deck(s), {total_notes} note(s), "
+                f"{copied_count} media file(s) to {output_file}"
+            )
 
     if not (include_media and all_media_files):
         # Write JSON file only (either media not requested or no media found)
         if include_media and not all_media_files:
-            logger.info("No media files found, creating JSON only")
+            logger.debug("No media files found, creating JSON only")
 
         with output_file.open("w", encoding="utf-8") as f:
             json.dump(package_data, f, indent=2, ensure_ascii=False)
 
-        package_msg = f"Packaged {total_decks} deck(s) with {total_notes} note(s)"
-        logger.info(f"{package_msg} to {output_file}")
+        logger.info(
+            f"Packaged {total_decks} deck(s), {total_notes} note(s) to {output_file}"
+        )
 
     return package_data
 
@@ -332,9 +335,11 @@ def unpackage_collection_from_json(
         collection_dir: Path to collection directory (will be created if doesn't exist)
         overwrite: If True, overwrite existing collection; if False, merge with existing
     """
+    total_media = 0
+
     # Check if input is a ZIP file
     if json_file.suffix == ".zip":
-        logger.info("Detected ZIP file, extracting...")
+        logger.debug("Detected ZIP file, extracting...")
         with zipfile.ZipFile(json_file, "r") as zipf:
             # Load JSON from ZIP
             with zipf.open("collection.json") as f:
@@ -409,12 +414,13 @@ def unpackage_collection_from_json(
                     source.close()
                     extracted_count += 1
 
+                total_media = extracted_count
                 summary_parts = [f"Extracted {extracted_count} media file(s)"]
                 if skipped_count > 0:
                     summary_parts.append(f"skipped {skipped_count} duplicate(s)")
                 if renamed_count > 0:
                     summary_parts.append(f"renamed {renamed_count} conflict(s)")
-                logger.info(", ".join(summary_parts))
+                logger.debug(", ".join(summary_parts))
     else:
         # Load JSON data directly
         with json_file.open("r", encoding="utf-8") as f:
@@ -443,7 +449,7 @@ auto_commit = {str(auto_commit).lower()}
 
 """
         marker_path.write_text(config_content)
-        logger.info(f"Created collection config for profile '{profile}'")
+        logger.debug(f"Created collection config for profile '{profile}'")
 
     # Process each deck
     from deckops.config import NOTE_TYPES
@@ -508,15 +514,17 @@ auto_commit = {str(auto_commit).lower()}
         content = "\n".join(lines)
         if overwrite or not output_path.exists():
             output_path.write_text(content)
-            logger.info(f"Created {filename} with {len(notes)} note(s)")
+            logger.info(f"  Created {filename} ({len(notes)} notes)")
         else:
-            logger.info(
+            logger.debug(
                 f"Skipped {filename} (already exists, use --overwrite to replace)"
             )
 
         total_decks += 1
         total_notes += len(notes)
 
+    media_part = f", {total_media} media file(s)" if total_media else ""
     logger.info(
-        f"Unpackaged {total_decks} deck(s) with {total_notes} note(s) to {collection_dir}"
+        f"Unpackaged {total_decks} deck(s), {total_notes} note(s){media_part}"
+        f" to {collection_dir}"
     )

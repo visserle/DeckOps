@@ -15,7 +15,7 @@ from deckops.config import get_auto_commit, require_collection_dir
 from deckops.ensure_models import ensure_models
 from deckops.git import git_snapshot
 from deckops.init import create_tutorial, initialize_collection
-from deckops.log import configure_logging
+from deckops.log import configure_logging, format_changes
 from deckops.markdown_to_anki import (
     import_collection,
     import_file,
@@ -28,7 +28,7 @@ def connect_or_exit():
     """Verify AnkiConnect is reachable; exit on failure."""
     try:
         version = invoke("version")
-        logger.info(f"Connected to AnkiConnect (version {version})")
+        logger.debug(f"Connected to AnkiConnect (version {version})")
     except Exception as e:
         logger.error(f"Error connecting to AnkiConnect: {e}")
         logger.error("Make sure Anki is running and AnkiConnect is installed.")
@@ -46,7 +46,6 @@ def run_init(args):
 
     if args.tutorial:
         create_tutorial(collection_dir)
-        logger.info("Created tutorial file in collection directory")
 
     logger.info(
         f"Initialized DeckOps collection in {collection_dir} (profile: {profile})"
@@ -59,13 +58,13 @@ def run_am(args):
     active_profile = invoke("getActiveProfile")
 
     collection_dir = require_collection_dir(active_profile)
-    logger.info(f"Collection directory: {collection_dir}")
+    logger.debug(f"Collection directory: {collection_dir}")
 
     if get_auto_commit(collection_dir) and not args.no_auto_commit:
         git_snapshot(collection_dir, "export")
 
     if args.deck:
-        logger.info(f"Processing deck: {args.deck}...")
+        logger.debug(f"Processing deck: {args.deck}...")
         result = export_deck(args.deck, output_dir=str(collection_dir))
         results = [result] if result.file_path else []
         renamed_files = 0
@@ -81,23 +80,19 @@ def run_am(args):
         deleted_decks = summary.deleted_deck_files
         deleted_notes = summary.deleted_orphan_notes
 
-    total = sum(r.total_notes for r in results)
     updated = sum(r.updated for r in results)
     created = sum(r.created for r in results)
-    deleted = sum(r.deleted for r in results)
-    skipped = sum(r.skipped for r in results)
+    deleted = sum(r.deleted for r in results) + deleted_notes
+    total = sum(r.total_notes for r in results)
 
-    logger.info(f"{'=' * 60}")
-    logger.info(f"Export complete: {len(results)} files processed")
-    logger.info(f"Total notes: {total}")
-    logger.info(
-        f"Updated: {updated}, Created: {created}, "
-        f"Deleted: {deleted + deleted_notes}, Skipped: {skipped}"
+    changes = format_changes(
+        updated=updated,
+        created=created,
+        deleted=deleted,
+        renamed=renamed_files,
+        orphaned=deleted_decks,
     )
-    if renamed_files:
-        logger.info(f"Renamed: {renamed_files} deck file(s)")
-    if deleted_decks:
-        logger.info(f"Deleted: {deleted_decks} orphaned deck file(s)")
+    logger.info(f"Export complete: {len(results)} files, {total} notes — {changes}")
 
 
 def run_ma(args):
@@ -107,7 +102,7 @@ def run_ma(args):
     ensure_models()
 
     collection_dir = require_collection_dir(active_profile)
-    logger.info(f"Collection directory: {collection_dir}")
+    logger.debug(f"Collection directory: {collection_dir}")
 
     if get_auto_commit(collection_dir) and not args.no_auto_commit:
         git_snapshot(collection_dir, "import")
@@ -115,7 +110,7 @@ def run_ma(args):
     deleted_notes = 0
 
     if args.file:
-        logger.info(f"Processing {Path(args.file).name}...")
+        logger.debug(f"Processing {Path(args.file).name}...")
         results = [
             import_file(
                 Path(args.file),
@@ -150,35 +145,31 @@ def run_ma(args):
                     invoke("deleteNotes", notes=ud.note_ids)
                     deleted_notes += len(ud.note_ids)
                     logger.info(
-                        f"  Deleted {len(ud.note_ids)} managed notes from "
-                        f"'{ud.deck_name}' (deck_id: {ud.deck_id})"
+                        f"Deleted {len(ud.note_ids)} managed notes from "
+                        f"'{ud.deck_name}'"
                     )
             else:
-                logger.info("Skipped untracked note deletion.")
+                logger.debug("Skipped untracked note deletion.")
 
-    total = sum(r.total_notes for r in results)
     updated = sum(r.updated for r in results)
     created = sum(r.created for r in results)
-    deleted = sum(r.deleted for r in results)
+    deleted = sum(r.deleted for r in results) + deleted_notes
     moved = sum(r.moved for r in results)
-    skipped = sum(r.skipped for r in results)
     errors = sum(len(r.errors) for r in results)
+    total = sum(r.total_notes for r in results)
 
-    logger.info(f"{'=' * 60}")
-    logger.info(f"Import complete: {len(results)} files processed")
-    logger.info(f"Total notes: {total}")
-    logger.info(
-        f"Updated: {updated}, Created: {created}, "
-        f"Deleted: {deleted}, Moved: {moved}, "
-        f"Skipped: {skipped}, Errors: {errors}"
+    changes = format_changes(
+        updated=updated,
+        created=created,
+        deleted=deleted,
+        moved=moved,
+        errors=errors,
     )
-    if deleted_notes:
-        logger.info(f"Deleted: {deleted_notes} managed note(s) from untracked decks")
+    logger.info(f"Import complete: {len(results)} files, {total} notes — {changes}")
     if errors:
-        logger.error(
-            "Error(s) occurred during import. Details are logged above. Review, "
-            "resolve, and re-run the import or you risk losing notes with the next "
-            "export."
+        logger.critical(
+            "Review and resolve errors above, then re-run the import — "
+            "or you risk losing notes with the next export."
         )
 
 
@@ -192,8 +183,8 @@ def run_package(args):
     else:
         output_file = Path(f"{collection_dir.name}.json")
 
-    logger.info(f"Packaging collection from: {collection_dir}")
-    logger.info(f"Output file: {output_file}")
+    logger.debug(f"Packaging collection from: {collection_dir}")
+    logger.debug(f"Output file: {output_file}")
 
     include_ids = not args.no_ids
     include_media = args.include_media
@@ -203,8 +194,6 @@ def run_package(args):
         include_ids=include_ids,
         include_media=include_media,
     )
-    logger.info(f"{'=' * 60}")
-    logger.info(f"Package complete: {output_file}")
 
 
 def run_unpackage(args):
@@ -222,8 +211,8 @@ def run_unpackage(args):
         # Use filename (without extension) as collection directory name
         collection_dir = Path(package_file.stem)
 
-    logger.info(f"Importing package from: {package_file}")
-    logger.info(f"Creating local collection in: {collection_dir}")
+    logger.debug(f"Importing package from: {package_file}")
+    logger.debug(f"Target collection directory: {collection_dir}")
 
     if collection_dir.exists() and not args.overwrite:
         logger.warning(
@@ -234,8 +223,6 @@ def run_unpackage(args):
     unpackage_collection_from_json(
         package_file, collection_dir, overwrite=args.overwrite
     )
-    logger.info(f"{'=' * 60}")
-    logger.info(f"Import complete: {collection_dir}")
 
 
 def main():

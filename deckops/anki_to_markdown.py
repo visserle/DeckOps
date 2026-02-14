@@ -15,6 +15,7 @@ from pathlib import Path
 from deckops.anki_client import AnkiState
 from deckops.config import NOTE_SEPARATOR, SUPPORTED_NOTE_TYPES
 from deckops.html_converter import HTMLToMarkdown
+from deckops.log import format_changes
 from deckops.markdown_helpers import (
     extract_deck_id,
     extract_note_blocks,
@@ -272,7 +273,7 @@ def export_collection(
         expected_name = sanitize_filename(anki.id_to_deck_name[deck_id]) + ".md"
         if fs.file_path.name != expected_name:
             new_path = fs.file_path.parent / expected_name
-            logger.info(f"  Renamed {fs.file_path.name} -> {expected_name}")
+            logger.info(f"Renamed {fs.file_path.name} -> {expected_name}")
             fs.file_path.rename(new_path)
             # Update references to the new path
             del files_by_path[fs.file_path]
@@ -299,7 +300,7 @@ def export_collection(
     total_decks = len(anki.deck_names_and_ids)
     if total_decks > 1 and not anki.deck_note_ids.get("default"):
         total_decks -= 1
-    logger.info(
+    logger.debug(
         f"Found {total_decks} decks, {len(relevant_decks)} with supported note types"
     )
 
@@ -315,7 +316,7 @@ def export_collection(
         deck_id = anki.deck_names_and_ids[deck_name]
         existing_file = files_by_deck_id.get(deck_id)
 
-        logger.info(f"Processing {deck_name} (id: {deck_id})...")
+        logger.debug(f"Processing {deck_name} (id: {deck_id})...")
         result, new_content = _sync_deck(
             deck_name, deck_id, anki, converter, existing_file
         )
@@ -342,18 +343,19 @@ def export_collection(
                 all_created_ids.update(created_ids)
                 all_deleted_ids.update(deleted_ids)
 
-        if result.total_notes > 0:
-            logger.info(
-                f"  Updated: {result.updated}, Created: {result.created}, "
-                f"Deleted: {result.deleted}, Skipped: {result.skipped}"
-            )
+        changes = format_changes(
+            updated=result.updated, created=result.created,
+            deleted=result.deleted,
+        )
+        if changes != "no changes":
+            logger.info(f"  {deck_name}: {changes}")
 
     # Detect cross-deck moves
     moved_ids = all_created_ids & all_deleted_ids
     if moved_ids:
         logger.info(
-            f"  Note: {len(moved_ids)} of the above created/deleted note(s) were "
-            f"moved between decks (review history is preserved)"
+            f"  {len(moved_ids)} note(s) moved between decks "
+            f"(review history preserved)"
         )
 
     # Phase 6: Delete orphaned deck files and notes
@@ -366,10 +368,7 @@ def export_collection(
         # Delete files whose deck_id doesn't exist in Anki
         for deck_id, fs in files_by_deck_id.items():
             if deck_id not in anki_deck_ids:
-                logger.info(
-                    f"  Deleting orphaned deck file "
-                    f"{fs.file_path.name} (deck_id: {deck_id})"
-                )
+                logger.info(f"Deleted orphaned deck file {fs.file_path.name}")
                 fs.file_path.unlink()
                 deleted_deck_files += 1
 
@@ -398,8 +397,8 @@ def export_collection(
                     nid = int(note_match.group(1))
                     if nid not in all_note_ids:
                         deleted += 1
-                        logger.info(
-                            f"  Deleting note {nid} from {md_file.name}"
+                        logger.debug(
+                            f"Deleting note {nid} from {md_file.name}"
                         )
                         continue
                 kept.append(stripped)
@@ -408,7 +407,7 @@ def export_collection(
                 new_content = deck_id_prefix + NOTE_SEPARATOR.join(kept)
                 md_file.write_text(new_content, encoding="utf-8")
                 logger.info(
-                    f"{md_file.name}: deleted {deleted} orphaned block(s)"
+                    f"  {md_file.name}: {deleted} orphaned note(s) deleted"
                 )
                 deleted_orphan_notes += deleted
 
