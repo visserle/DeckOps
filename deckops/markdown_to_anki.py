@@ -32,38 +32,6 @@ logger = logging.getLogger(__name__)
 
 
 @dataclass
-class FileImportResult:
-    """Result of importing a single file."""
-
-    file_path: Path
-    deck_name: str
-    total_notes: int
-    updated: int
-    created: int
-    deleted: int
-    moved: int
-    skipped: int
-    errors: list[str] = field(default_factory=list)
-
-
-@dataclass
-class UntrackedDeck:
-    """An Anki deck with DeckOps notes but no matching markdown file."""
-
-    deck_name: str
-    deck_id: int
-    note_ids: list[int]
-
-
-@dataclass
-class ImportSummary:
-    """Aggregate result of a full collection import."""
-
-    file_results: list[FileImportResult]
-    untracked_decks: list[UntrackedDeck]
-
-
-@dataclass
 class FileState:
     """All data parsed from one markdown file in a single read."""
 
@@ -87,6 +55,15 @@ class FileState:
 
 
 @dataclass
+class UntrackedDeck:
+    """An Anki deck with DeckOps notes but no matching markdown file."""
+
+    deck_name: str
+    deck_id: int
+    note_ids: list[int]
+
+
+@dataclass
 class _PendingWrite:
     """Deferred file modification, applied after all Anki mutations."""
 
@@ -94,6 +71,29 @@ class _PendingWrite:
     raw_content: str
     deck_id_to_write: int | None
     id_assignments: list[tuple[ParsedNote, int]]
+
+
+@dataclass
+class FileImportResult:
+    """Result of importing a single file."""
+
+    file_path: Path
+    deck_name: str
+    total_notes: int
+    updated: int
+    created: int
+    deleted: int
+    moved: int
+    skipped: int
+    errors: list[str] = field(default_factory=list)
+
+
+@dataclass
+class ImportSummary:
+    """Aggregate result of a full collection import."""
+
+    file_results: list[FileImportResult]
+    untracked_decks: list[UntrackedDeck]
 
 
 # ---------------------------------------------------------------------------
@@ -126,16 +126,13 @@ def _validate_no_duplicate_first_lines(
         first_line = parsed_note.raw_content.strip().split("\n")[0]
         first_lines.setdefault(first_line, []).append(note_identifier(parsed_note))
 
-    duplicates = {
-        line: ids for line, ids in first_lines.items() if len(ids) > 1
-    }
+    duplicates = {line: ids for line, ids in first_lines.items() if len(ids) > 1}
     if duplicates:
         msg = f"ERROR: Duplicate first lines detected in {file_path.name}:\n"
         for first_line, ids in duplicates.items():
             msg += f"  '{first_line[:60]}...' in notes: {', '.join(ids)}\n"
         msg += (
-            "Cannot safely assign IDs. "
-            "Please ensure each note has a unique first line."
+            "Cannot safely assign IDs. Please ensure each note has a unique first line."
         )
         raise ValueError(msg)
 
@@ -210,9 +207,7 @@ def _sync_file(
             logger.info(f"Created new deck '{deck_name}' (id: {new_deck_id})")
         elif not fs.deck_id:
             deck_id_to_write = anki.deck_names_and_ids[deck_name]
-            logger.debug(
-                f"Wrote deck_id {deck_id_to_write} to {fs.file_path.name}"
-            )
+            logger.debug(f"Wrote deck_id {deck_id_to_write} to {fs.file_path.name}")
 
     result = FileImportResult(
         file_path=fs.file_path,
@@ -234,8 +229,7 @@ def _sync_file(
         if validation_errors:
             for err in validation_errors:
                 result.errors.append(
-                    f"Note {note.note_id or 'new'} "
-                    f"({note_identifier(note)}): {err}"
+                    f"Note {note.note_id or 'new'} ({note_identifier(note)}): {err}"
                 )
             continue
 
@@ -243,8 +237,7 @@ def _sync_file(
             html_fields = convert_fields_to_html(note.fields, converter)
         except Exception as e:
             result.errors.append(
-                f"Note {note.note_id or 'new'} "
-                f"({note_identifier(note)}): {e}"
+                f"Note {note.note_id or 'new'} ({note_identifier(note)}): {e}"
             )
             continue
 
@@ -300,9 +293,7 @@ def _sync_file(
             result.moved += len(moved_notes)
         except Exception as e:
             for note, _ in existing:
-                result.errors.append(
-                    f"Note {note.note_id}: failed to move deck: {e}"
-                )
+                result.errors.append(f"Note {note.note_id}: failed to move deck: {e}")
 
     # Build update batch
     stale: list[tuple[ParsedNote, dict[str, str]]] = []
@@ -327,9 +318,7 @@ def _sync_file(
         updates.append(
             {
                 "action": "updateNoteFields",
-                "params": {
-                    "note": {"id": note.note_id, "fields": html_fields}
-                },
+                "params": {"note": {"id": note.note_id, "fields": html_fields}},
             }
         )
         update_notes.append(note)
@@ -410,9 +399,7 @@ def _sync_file(
                     )
         except Exception as e:
             for note, _ in new:
-                result.errors.append(
-                    f"Note new ({note_identifier(note)}): {e}"
-                )
+                result.errors.append(f"Note new ({note_identifier(note)}): {e}")
 
     # ---- Phase 5: Return result + pending write ----
     pending = _PendingWrite(
@@ -530,8 +517,10 @@ def import_collection(
         pending_writes.append(pending)
 
         changes = format_changes(
-            updated=file_result.updated, created=file_result.created,
-            deleted=file_result.deleted, moved=file_result.moved,
+            updated=file_result.updated,
+            created=file_result.created,
+            deleted=file_result.deleted,
+            moved=file_result.moved,
             errors=len(file_result.errors),
         )
         if changes != "no changes":

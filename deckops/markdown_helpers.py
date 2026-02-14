@@ -61,14 +61,17 @@ def extract_deck_id(content: str) -> tuple[int | None, str]:
     return None, content
 
 
-def extract_note_blocks(content: str) -> dict[str, str]:
+def extract_note_blocks(cards_content: str) -> dict[str, str]:
     """Extract identified note blocks from content.
+
+    Args:
+        cards_content: Content with deck_id already stripped
+            (the output of extract_deck_id).
 
     Returns {"note_id: 123": block_content, ...}.
     """
-    _, content = extract_deck_id(content)
     notes: dict[str, str] = {}
-    for block in content.split(NOTE_SEPARATOR):
+    for block in cards_content.split(NOTE_SEPARATOR):
         stripped = block.strip()
         if not stripped:
             continue
@@ -76,6 +79,31 @@ def extract_note_blocks(content: str) -> dict[str, str]:
         if match:
             notes[f"note_id: {match.group(1)}"] = stripped
     return notes
+
+
+def has_untracked_notes(cards_content: str) -> bool:
+    """Check if content has note blocks without note_id comments.
+
+    Args:
+        cards_content: Content with deck_id already stripped
+            (the output of extract_deck_id).
+
+    Returns True if there are notes that haven't been imported to Anki yet.
+    """
+    for block in cards_content.split(NOTE_SEPARATOR):
+        stripped = block.strip()
+        if not stripped:
+            continue
+        # Check if block has any field prefixes but no note_id
+        has_fields = any(
+            stripped.startswith(prefix + " ") or ("\n" + prefix + " ") in stripped
+            for prefix in ALL_PREFIX_TO_FIELD.keys()
+        )
+        has_note_id = _NOTE_ID_PATTERN.match(stripped) is not None
+
+        if has_fields and not has_note_id:
+            return True
+    return False
 
 
 def _detect_note_type(fields: dict[str, str]) -> str:

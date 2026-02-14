@@ -20,6 +20,7 @@ from deckops.markdown_helpers import (
     extract_deck_id,
     extract_note_blocks,
     format_note,
+    has_untracked_notes,
     sanitize_filename,
 )
 
@@ -29,6 +30,34 @@ logger = logging.getLogger(__name__)
 # ---------------------------------------------------------------------------
 # Data classes
 # ---------------------------------------------------------------------------
+
+
+@dataclass
+class FileState:
+    """Existing markdown file content, read once."""
+
+    file_path: Path
+    raw_content: str
+    deck_id: int | None
+    existing_blocks: dict[str, str]  # "note_id: 123" -> block content
+    has_untracked: bool  # True if file has notes without note_id
+
+    @staticmethod
+    def from_file(file_path: Path) -> "FileState":
+        raw_content = file_path.read_text(encoding="utf-8")
+        deck_id, cards_content = extract_deck_id(raw_content)
+
+        # Parse cards_content only once for all operations
+        existing_blocks = extract_note_blocks(cards_content)
+        has_untracked = has_untracked_notes(cards_content)
+
+        return FileState(
+            file_path=file_path,
+            raw_content=raw_content,
+            deck_id=deck_id,
+            existing_blocks=existing_blocks,
+            has_untracked=has_untracked,
+        )
 
 
 @dataclass
@@ -54,28 +83,6 @@ class ExportSummary:
     renamed_files: int
     deleted_deck_files: int
     deleted_orphan_notes: int
-
-
-@dataclass
-class FileState:
-    """Existing markdown file content, read once."""
-
-    file_path: Path
-    raw_content: str
-    deck_id: int | None
-    existing_blocks: dict[str, str]  # "note_id: 123" -> block content
-
-    @staticmethod
-    def from_file(file_path: Path) -> "FileState":
-        raw_content = file_path.read_text(encoding="utf-8")
-        deck_id, _ = extract_deck_id(raw_content)
-        existing_blocks = extract_note_blocks(raw_content)
-        return FileState(
-            file_path=file_path,
-            raw_content=raw_content,
-            deck_id=deck_id,
-            existing_blocks=existing_blocks,
-        )
 
 
 # ---------------------------------------------------------------------------
@@ -216,9 +223,28 @@ def export_deck(
     output_path = Path(output_dir) / (sanitize_filename(deck_name) + ".md")
     existing_file = FileState.from_file(output_path) if output_path.exists() else None
 
-    result, new_content = _sync_deck(
-        deck_name, deck_id, anki, converter, existing_file
-    )
+    # Check for untracked notes before overwriting
+    if existing_file and existing_file.has_untracked:
+        logger.warning(
+            f"The file {output_path.name} contains new notes without note IDs."
+        )
+        logger.warning(
+            "\nThese notes have not been imported to Anki yet and will be LOST "
+            "if you continue with the export."
+        )
+        logger.warning(
+            "\nTo preserve them, first run:\n  deckops markdown-to-anki --only-add-new"
+        )
+        answer = (
+            input("\nContinue with export anyway (new notes will be lost)? [y/N] ")
+            .strip()
+            .lower()
+        )
+        if answer != "y":
+            logger.info("Export cancelled. Import your new notes first.")
+            raise SystemExit(0)
+
+    result, new_content = _sync_deck(deck_name, deck_id, anki, converter, existing_file)
 
     if new_content is not None:
         old_content = existing_file.raw_content if existing_file else None
@@ -264,6 +290,34 @@ def export_collection(
             files_by_deck_id[fs.deck_id] = fs
         else:
             unlinked_files.append(fs)
+
+    # Check for untracked notes (notes without IDs) before overwriting
+    files_with_untracked: list[Path] = []
+    for md_file, fs in files_by_path.items():
+        if fs.has_untracked:
+            files_with_untracked.append(md_file)
+
+    if files_with_untracked:
+        logger.warning(
+            "The following markdown files contain new notes without note IDs:"
+        )
+        for file_path in files_with_untracked:
+            logger.warning(f"  - {file_path.name}")
+        logger.warning(
+            "\nThese notes have not been imported to Anki yet and will be LOST "
+            "if you continue with the export."
+        )
+        logger.warning(
+            "\nTo preserve them, first run:\n  deckops markdown-to-anki --only-add-new"
+        )
+        answer = (
+            input("\nContinue with export anyway (new notes will be lost)? [y/N] ")
+            .strip()
+            .lower()
+        )
+        if answer != "y":
+            logger.info("Export cancelled. Import your new notes first.")
+            raise SystemExit(0)
 
     # Phase 3: Rename files for decks renamed in Anki
     renamed_files = 0
@@ -344,7 +398,8 @@ def export_collection(
                 all_deleted_ids.update(deleted_ids)
 
         changes = format_changes(
-            updated=result.updated, created=result.created,
+            updated=result.updated,
+            created=result.created,
             deleted=result.deleted,
         )
         if changes != "no changes":
@@ -354,8 +409,7 @@ def export_collection(
     moved_ids = all_created_ids & all_deleted_ids
     if moved_ids:
         logger.info(
-            f"  {len(moved_ids)} note(s) moved between decks "
-            f"(review history preserved)"
+            f"  {len(moved_ids)} note(s) moved between decks (review history preserved)"
         )
 
     # Phase 6: Delete orphaned deck files and notes
@@ -376,9 +430,7 @@ def export_collection(
         for md_file in output_path.glob("*.md"):
             # Re-read files that were just written (content may have changed)
             content = md_file.read_text(encoding="utf-8")
-            deck_id_match = re.match(
-                r"(<!--\s*deck_id:\s*\d+\s*-->\n?)", content
-            )
+            deck_id_match = re.match(r"(<!--\s*deck_id:\s*\d+\s*-->\n?)", content)
             deck_id_prefix = deck_id_match.group(1) if deck_id_match else ""
             _, cards_content = extract_deck_id(content)
 
@@ -390,25 +442,19 @@ def export_collection(
                 stripped = block.strip()
                 if not stripped:
                     continue
-                note_match = re.match(
-                    r"<!--\s*note_id:\s*(\d+)\s*-->", stripped
-                )
+                note_match = re.match(r"<!--\s*note_id:\s*(\d+)\s*-->", stripped)
                 if note_match:
                     nid = int(note_match.group(1))
                     if nid not in all_note_ids:
                         deleted += 1
-                        logger.debug(
-                            f"Deleting note {nid} from {md_file.name}"
-                        )
+                        logger.debug(f"Deleting note {nid} from {md_file.name}")
                         continue
                 kept.append(stripped)
 
             if deleted > 0:
                 new_content = deck_id_prefix + NOTE_SEPARATOR.join(kept)
                 md_file.write_text(new_content, encoding="utf-8")
-                logger.info(
-                    f"  {md_file.name}: {deleted} orphaned note(s) deleted"
-                )
+                logger.info(f"  {md_file.name}: {deleted} orphaned note(s) deleted")
                 deleted_orphan_notes += deleted
 
     return ExportSummary(
