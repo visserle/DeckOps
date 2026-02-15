@@ -9,9 +9,11 @@ import zipfile
 from datetime import datetime, timezone
 from pathlib import Path
 
-from ankiops.config import MARKER_FILE, NOTE_TYPES
+from ankiops.config import MARKER_FILE, NOTE_TYPES, get_collection_dir
+from ankiops.log import clickable_path
 from ankiops.markdown_helpers import (
     extract_deck_id,
+    infer_note_type,
     parse_note_block,
 )
 
@@ -23,38 +25,8 @@ ANKI_SOUND_PATTERN = r"\[sound:([^\]]+)\]"
 HTML_IMG_PATTERN = r'<img[^>]+src=["\']([^"\']+)["\']'
 
 
-def infer_note_type(fields: dict[str, str]) -> str:
-    """Infer note type from field structure.
-
-    Args:
-        fields: Dictionary of field names to values
-
-    Returns:
-        Note type name
-
-    Raises:
-        ValueError: If note type cannot be determined from fields
-    """
-    if "Text" in fields:
-        return "AnkiOpsCloze"
-    elif "Choice 1" in fields:
-        return "AnkiOpsChoice"
-    elif "Question" in fields:
-        return "AnkiOpsQA"
-    else:
-        field_list = list(fields.keys())
-        raise ValueError(f"Cannot determine note type from fields: {field_list}")
-
-
 def compute_file_hash(file_path: Path) -> str:
-    """Compute SHA256 hash of a file.
-
-    Args:
-        file_path: Path to the file to hash
-
-    Returns:
-        Hexadecimal hash string
-    """
+    """Compute SHA256 hash of a file. Returns hexadecimal hash string."""
     sha256 = hashlib.sha256()
     with open(file_path, "rb") as f:
         for chunk in iter(lambda: f.read(8192), b""):
@@ -65,18 +37,28 @@ def compute_file_hash(file_path: Path) -> str:
 def compute_zipfile_hash(zipf: zipfile.ZipFile, filename: str) -> str:
     """Compute SHA256 hash of a file in a ZIP archive.
 
-    Args:
-        zipf: ZipFile object
-        filename: Name of file within the ZIP
-
-    Returns:
-        Hexadecimal hash string
+    Returns hexadecimal hash string.
     """
     sha256 = hashlib.sha256()
     with zipf.open(filename) as f:
         for chunk in iter(lambda: f.read(8192), b""):
             sha256.update(chunk)
     return sha256.hexdigest()
+
+
+def _normalize_media_path(path: str) -> str:
+    """Normalize media path by stripping angle brackets and media/ prefix.
+
+    Args:
+        path: Raw path string from markdown/HTML
+
+    Returns:
+        Normalized path without angle brackets or media/ prefix
+    """
+    path = path.strip("<>")
+    if path.startswith("media/"):
+        path = path[6:]
+    return path
 
 
 def update_media_references(text: str, rename_map: dict[str, str]) -> str:
@@ -92,48 +74,34 @@ def update_media_references(text: str, rename_map: dict[str, str]) -> str:
     if not rename_map:
         return text
 
-    updated_text = text
+    def replace_media_ref(match, add_prefix=True):
+        """Replace media reference if it's in the rename map."""
+        original_path = match.group(1)
+        normalized_path = _normalize_media_path(original_path)
 
-    # Update markdown images: ![alt](filename.png)
-    def replace_md_image(match):
-        path = match.group(1).strip("<>")
-        original_path = path
-        if path.startswith("media/"):
-            path = path[6:]
-        if path in rename_map:
-            new_path = rename_map[path]
-            return match.group(0).replace(original_path, f"media/{new_path}")
-        return match.group(0)
-
-    updated_text = re.sub(MARKDOWN_IMAGE_PATTERN, replace_md_image, updated_text)
-
-    # Update Anki sound tags: [sound:audio.mp3]
-    def replace_sound(match):
-        path = match.group(1).strip("<>")
-        original_path = path
-        if path.startswith("media/"):
-            path = path[6:]
-        if path in rename_map:
-            new_path = rename_map[path]
+        if normalized_path in rename_map:
+            new_path = rename_map[normalized_path]
+            if add_prefix:
+                new_path = f"media/{new_path}"
             return match.group(0).replace(original_path, new_path)
         return match.group(0)
 
-    updated_text = re.sub(ANKI_SOUND_PATTERN, replace_sound, updated_text)
+    # Update markdown images: ![alt](media/filename.png)
+    text = re.sub(
+        MARKDOWN_IMAGE_PATTERN, lambda m: replace_media_ref(m, add_prefix=True), text
+    )
 
-    # Update HTML img tags: <img src="file.jpg">
-    def replace_html_img(match):
-        path = match.group(1).strip("<>")
-        original_path = path
-        if path.startswith("media/"):
-            path = path[6:]
-        if path in rename_map:
-            new_path = rename_map[path]
-            return match.group(0).replace(original_path, f"media/{new_path}")
-        return match.group(0)
+    # Update Anki sound tags: [sound:audio.mp3] (no prefix)
+    text = re.sub(
+        ANKI_SOUND_PATTERN, lambda m: replace_media_ref(m, add_prefix=False), text
+    )
 
-    updated_text = re.sub(HTML_IMG_PATTERN, replace_html_img, updated_text)
+    # Update HTML img tags: <img src="media/file.jpg">
+    text = re.sub(
+        HTML_IMG_PATTERN, lambda m: replace_media_ref(m, add_prefix=True), text
+    )
 
-    return updated_text
+    return text
 
 
 def extract_media_references(text: str) -> set[str]:
@@ -145,33 +113,15 @@ def extract_media_references(text: str) -> set[str]:
     - HTML img tags: <img src="file.jpg">
 
     Returns:
-        Set of media file paths (preserves relative path structure)
+        Set of normalized media file paths (without media/ prefix)
     """
     media_files = set()
 
-    # Markdown images: ![alt](filename.png) or ![alt](filename.png){width=500}
-    for match in re.finditer(MARKDOWN_IMAGE_PATTERN, text):
-        path = match.group(1)
-        # Strip angle brackets if present (markdown URL syntax)
-        path = path.strip("<>")
-        # Remove leading 'media/' if present
-        if path.startswith("media/"):
-            path = path[6:]  # Remove 'media/' prefix
-        media_files.add(path)
-
-    # Anki sound tags: [sound:audio.mp3]
-    for match in re.finditer(ANKI_SOUND_PATTERN, text):
-        path = match.group(1).strip("<>")
-        if path.startswith("media/"):
-            path = path[6:]
-        media_files.add(path)
-
-    # HTML img tags: <img src="file.jpg">
-    for match in re.finditer(HTML_IMG_PATTERN, text):
-        path = match.group(1).strip("<>")
-        if path.startswith("media/"):
-            path = path[6:]
-        media_files.add(path)
+    # Extract from all three pattern types
+    for pattern in [MARKDOWN_IMAGE_PATTERN, ANKI_SOUND_PATTERN, HTML_IMG_PATTERN]:
+        for match in re.finditer(pattern, text):
+            path = _normalize_media_path(match.group(1))
+            media_files.add(path)
 
     return media_files
 
@@ -198,26 +148,19 @@ def serialize_collection_to_json(
     if not marker_path.exists():
         raise ValueError(f"Not a AnkiOps collection: {collection_dir}")
 
-    # Parse .ankiops config file
+    # Parse .ankiops config file to get media_dir
     config_content = marker_path.read_text()
-    profile = None
     media_dir_path = None
-    auto_commit = True
 
     for line in config_content.split("\n"):
         line = line.strip()
-        if line.startswith("profile ="):
-            profile = line.split("=", 1)[1].strip()
-        elif line.startswith("media_dir ="):
+        if line.startswith("media_dir ="):
             media_dir_path = line.split("=", 1)[1].strip()
-        elif line.startswith("auto_commit ="):
-            auto_commit = line.split("=", 1)[1].strip().lower() == "true"
+            break
 
     # Build JSON structure
     serialized_data = {
         "collection": {
-            "profile": profile,
-            "auto_commit": auto_commit,
             "serialized_at": datetime.now(timezone.utc).isoformat(),
         },
         "decks": [],
@@ -356,17 +299,34 @@ def serialize_collection_to_json(
     return serialized_data
 
 
-def deserialize_collection_from_json(
-    json_file: Path, collection_dir: Path, overwrite: bool = False
-) -> None:
+def deserialize_collection_from_json(json_file: Path, overwrite: bool = False) -> None:
     """Deserialize collection from JSON or ZIP format.
+
+    In development mode (pyproject.toml with name="ankiops" in cwd),
+    unpacks to ./collection. Otherwise, unpacks to the current working directory.
+
+    Note: This only extracts markdown and media files. Run 'ankiops init' after
+    deserializing to set up the .ankiops config file with your profile settings.
 
     Args:
         json_file: Path to JSON or ZIP file to deserialize
-        collection_dir: Path to collection directory (will be created if doesn't exist)
-        overwrite: If True, overwrite existing collection; if False, merge with existing
+        overwrite: If True, overwrite existing markdown files; if False, skip
     """
     total_media = 0
+    # Use collection directory (respects development mode)
+    root_dir = get_collection_dir()
+
+    logger.debug(f"Importing serialized collection from: {json_file}")
+    logger.debug(f"Target directory: {root_dir}")
+
+    # Check for existing markdown files that would be overwritten
+    if not overwrite:
+        existing_md_files = list(root_dir.glob("*.md"))
+        if existing_md_files:
+            logger.warning(
+                f"Found {len(existing_md_files)} existing markdown file(s) "
+                f"in {root_dir}. Use --overwrite to replace them."
+            )
 
     # Check if input is a ZIP file
     if json_file.suffix == ".zip":
@@ -375,9 +335,6 @@ def deserialize_collection_from_json(
             # Load JSON from ZIP
             with zipf.open("collection.json") as f:
                 data = json.load(f)
-
-            # Create collection directory if it doesn't exist
-            collection_dir.mkdir(parents=True, exist_ok=True)
 
             # Extract media files if present
             media_files = [
@@ -388,7 +345,7 @@ def deserialize_collection_from_json(
 
             if media_files:
                 # Create media directory
-                media_dir = collection_dir / "media" / "AnkiOpsMedia"
+                media_dir = root_dir / "media" / "AnkiOpsMedia"
                 media_dir.mkdir(parents=True, exist_ok=True)
 
                 # Extract media files with conflict handling
@@ -455,27 +412,8 @@ def deserialize_collection_from_json(
         with json_file.open("r", encoding="utf-8") as f:
             data = json.load(f)
 
-        # Create collection directory if it doesn't exist
-        collection_dir.mkdir(parents=True, exist_ok=True)
-
         # No media files in JSON-only format
         media_rename_map = {}
-
-    # Write .ankiops config file
-    marker_path = collection_dir / MARKER_FILE
-    if overwrite or not marker_path.exists():
-        profile = data["collection"].get("profile", "default")
-        auto_commit = data["collection"].get("auto_commit", True)
-
-        config_content = f"""# AnkiOps collection — do not delete this file.
-
-[ankiops]
-profile = {profile}
-auto_commit = {str(auto_commit).lower()}
-
-"""
-        marker_path.write_text(config_content)
-        logger.debug(f"Created collection config for profile '{profile}'")
 
     # Process each deck
     total_decks = 0
@@ -488,7 +426,7 @@ auto_commit = {str(auto_commit).lower()}
 
         # Sanitize filename (replace :: with __)
         filename = deck_name.replace("::", "__") + ".md"
-        output_path = collection_dir / filename
+        output_path = root_dir / filename
 
         # Build markdown content
         lines = []
@@ -546,10 +484,10 @@ auto_commit = {str(auto_commit).lower()}
         content = "\n".join(lines)
         if overwrite or not output_path.exists():
             output_path.write_text(content)
-            logger.info(f"  Created {filename} ({len(notes)} notes)")
+            logger.info(f"  Created {clickable_path(output_path)} ({len(notes)} notes)")
         else:
             logger.debug(
-                f"Skipped {filename} (already exists, use --overwrite to replace)"
+                f"Skipped {clickable_path(output_path)} (already exists, use --overwrite to replace)"
             )
 
         total_decks += 1
@@ -558,5 +496,12 @@ auto_commit = {str(auto_commit).lower()}
     media_part = f", {total_media} media file(s)" if total_media else ""
     logger.info(
         f"Deserialized {total_decks} deck(s), {total_notes} note(s){media_part}"
-        f" to {collection_dir}"
+        f" to {root_dir}"
     )
+
+    # Check if .ankiops marker file exists
+    marker_path = root_dir / MARKER_FILE
+    if not marker_path.exists():
+        logger.info(
+            "Run 'ankiops init' to set up this collection with your Anki profile."
+        )

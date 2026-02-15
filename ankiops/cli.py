@@ -8,11 +8,10 @@ from ankiops.anki_to_markdown import (
     export_deck,
 )
 from ankiops.collection_serializer import (
-    serialize_collection_to_json,
     deserialize_collection_from_json,
+    serialize_collection_to_json,
 )
-from ankiops.config import get_auto_commit, require_collection_dir
-from ankiops.ensure_models import ensure_models
+from ankiops.config import get_auto_commit, get_collection_dir, require_collection_dir
 from ankiops.git import git_snapshot
 from ankiops.init import create_tutorial, initialize_collection
 from ankiops.log import configure_logging, format_changes
@@ -20,6 +19,7 @@ from ankiops.markdown_to_anki import (
     import_collection,
     import_file,
 )
+from ankiops.note_types import ensure_note_types
 
 logger = logging.getLogger(__name__)
 
@@ -99,7 +99,7 @@ def run_ma(args):
     """Markdown -> Anki: import markdown files into Anki."""
     connect_or_exit()
     active_profile = invoke("getActiveProfile")
-    ensure_models()
+    ensure_note_types()
 
     collection_dir = require_collection_dir(active_profile)
     logger.debug(f"Collection directory: {collection_dir}")
@@ -176,8 +176,15 @@ def run_ma(args):
 
 def run_serialize(args):
     """Serialize collection to JSON format."""
-    active_profile = invoke("getActiveProfile")
-    collection_dir = require_collection_dir(active_profile)
+    collection_dir = get_collection_dir()
+    marker_path = collection_dir / ".ankiops"
+
+    if not marker_path.exists():
+        logger.error(
+            f"Not an AnkiOps collection ({collection_dir}). "
+            "Run 'ankiops init' first or navigate to a collection directory."
+        )
+        raise SystemExit(1)
 
     if args.output:
         output_file = Path(args.output)
@@ -198,32 +205,14 @@ def run_serialize(args):
 
 
 def run_deserialize(args):
-    """Deserialize collection from JSON/ZIP format."""
+    """Deserialize collection from JSON/ZIP format to target directory."""
     serialized_file = Path(args.serialized_file)
 
     if not serialized_file.exists():
         logger.error(f"Serialized file not found: {serialized_file}")
         raise SystemExit(1)
 
-    # Determine collection directory
-    if args.directory:
-        collection_dir = Path(args.directory)
-    else:
-        # Use filename (without extension) as collection directory name
-        collection_dir = Path(serialized_file.stem)
-
-    logger.debug(f"Importing serialized collection from: {serialized_file}")
-    logger.debug(f"Target collection directory: {collection_dir}")
-
-    if collection_dir.exists() and not args.overwrite:
-        logger.warning(
-            f"Collection directory {collection_dir} already exists. "
-            "Use --overwrite to replace existing files."
-        )
-
-    deserialize_collection_from_json(
-        serialized_file, collection_dir, overwrite=args.overwrite
-    )
+    deserialize_collection_from_json(serialized_file, overwrite=args.overwrite)
 
 
 def main():
@@ -306,7 +295,7 @@ def main():
     # Serialize parser
     serialize_parser = subparsers.add_parser(
         "serialize",
-        help="Export your AnkiOps collection to a portable JSON/ZIP file",
+        help="Export collection to portable JSON/ZIP (no Anki required)",
     )
     serialize_parser.add_argument(
         "--output",
@@ -328,7 +317,7 @@ def main():
     # Deserialize parser
     deserialize_parser = subparsers.add_parser(
         "deserialize",
-        help="Import a serialized collection (JSON/ZIP) into a local AnkiOps directory",
+        help="Import markdown/media from JSON/ZIP (run 'init' after to set up)",
     )
     deserialize_parser.add_argument(
         "serialized_file",
@@ -336,15 +325,9 @@ def main():
         help="Serialized file to import (.json or .zip)",
     )
     deserialize_parser.add_argument(
-        "--directory",
-        "-d",
-        metavar="DIR",
-        help="Local collection directory to create/update (default: use file name)",
-    )
-    deserialize_parser.add_argument(
         "--overwrite",
         action="store_true",
-        help="Overwrite existing markdown files (Anki media uses smart conflict resolution)",
+        help="Overwrite existing markdown files (media uses smart conflict resolution)",
     )
     deserialize_parser.set_defaults(handler=run_deserialize)
 
@@ -368,14 +351,16 @@ def main():
         print("  anki-to-markdown  Export Anki decks to Markdown files (alias: am)")
         print("  markdown-to-anki  Import Markdown files into Anki (alias: ma)")
         print("  serialize         Export collection to a portable JSON/ZIP file")
-        print("  deserialize       Import a serialized file into a local AnkiOps directory")
+        print("  deserialize       Import markdown/media from JSON/ZIP")
         print()
         print("Usage examples:")
         print("  ankiops init --tutorial            # Initialize with tutorial")
         print("  ankiops am                         # Export all decks to Markdown")
-        print("  ankiops ma                         # Import all Markdown files to Anki")
+        print(
+            "  ankiops ma                         # Import all Markdown files to Anki"
+        )
         print("  ankiops serialize -o my-deck.json  # Serialize collection to file")
-        print("  ankiops deserialize my-deck.json   # Deserialize file to local directory")
+        print("  ankiops deserialize my-deck.json   # Deserialize file, then run init")
         print()
         print("For more information:")
         print("  ankiops --help                 # Show general help")
