@@ -14,23 +14,26 @@ from pathlib import Path
 
 from ankiops.anki_client import invoke
 from ankiops.config import (
-    ALL_PREFIX_TO_FIELD,
     NOTE_SEPARATOR,
     NOTE_TYPES,
     SUPPORTED_NOTE_TYPES,
 )
-
-# Reverse of ALL_PREFIX_TO_FIELD: field_name -> prefix
-_FIELD_TO_PREFIX = {v: k for k, v in ALL_PREFIX_TO_FIELD.items()}
-
 
 _CLOZE_PATTERN = re.compile(r"\{\{c\d+::")
 _NOTE_ID_PATTERN = re.compile(r"<!--\s*note_id:\s*(\d+)\s*-->")
 _DECK_ID_PATTERN = re.compile(r"<!--\s*deck_id:\s*(\d+)\s*-->\n?")
 _CODE_FENCE_PATTERN = re.compile(r"^(```|~~~)")
 
-logger = logging.getLogger(__name__)
 
+# prefix -> field name mapping for all note types, e.g. "Q:" -> "Question"
+PREFIX_TO_FIELD: dict[str, str] = {}
+for _cfg in NOTE_TYPES.values():
+    for _field_name, _prefix, _ in _cfg["field_mappings"]:
+        PREFIX_TO_FIELD[_prefix] = _field_name
+FIELD_TO_PREFIX = {v: k for k, v in PREFIX_TO_FIELD.items()}
+
+
+logger = logging.getLogger(__name__)
 
 
 # ---------------------------------------------------------------------------
@@ -46,308 +49,6 @@ class InvalidID:
     id_type: str  # "deck_id" or "note_id"
     file_path: Path
     context: str  # additional context (e.g., note identifier)
-
-
-# ---------------------------------------------------------------------------
-# AnkiNote
-# ---------------------------------------------------------------------------
-
-
-@dataclass
-class AnkiNote:
-    """A note as it exists in Anki (wrapping the raw AnkiConnect dict).
-
-    Provides typed access to note data instead of raw dict indexing.
-    """
-
-    note_id: int
-    note_type: str  # modelName
-    fields: dict[str, str]  # {field_name: value} (HTML content, extracted)
-    card_ids: list[int]
-
-    @staticmethod
-    def from_raw(raw_note: dict) -> AnkiNote:
-        """Create an AnkiNote from a raw AnkiConnect notesInfo dict.
-
-        Extracts fields from raw_note["fields"][field_name]["value"] structure.
-        """
-        return AnkiNote(
-            note_id=raw_note["noteId"],
-            note_type=raw_note.get("modelName", ""),
-            fields={name: data["value"] for name, data in raw_note["fields"].items()},
-            card_ids=raw_note.get("cards", []),
-        )
-
-    def to_markdown(self, converter) -> str:
-        """Format this Anki note as a markdown block.
-
-        Args:
-            converter: HTMLToMarkdown converter instance
-
-        Returns:
-            Markdown block string starting with ``<!-- note_id: ... -->``.
-        """
-        field_mappings = NOTE_TYPES[self.note_type]["field_mappings"]
-        lines = [f"<!-- note_id: {self.note_id} -->"]
-
-        for field_name, prefix, mandatory in field_mappings:
-            value = self.fields.get(field_name, "")
-            if value:
-                md = converter.convert(value)
-                if md or mandatory:
-                    lines.append(f"{prefix} {md}")
-
-        return "\n".join(lines)
-
-
-# ---------------------------------------------------------------------------
-# Note
-# ---------------------------------------------------------------------------
-
-
-@dataclass
-class Note:
-    """A note parsed from a markdown block.
-
-    Single class for all note types.  The ``note_type`` field (e.g.
-    ``"AnkiOpsQA"``, ``"AnkiOpsCloze"``) drives behaviour via config lookup.
-    """
-
-    note_id: int | None
-    note_type: str
-    fields: dict[str, str]  # {field_name: markdown_content}
-
-    # -- constructor --------------------------------------------------------
-
-    @staticmethod
-    def infer_note_type(fields: dict[str, str]) -> str:
-        """Infer note type from parsed fields based on required fields.
-
-        Checks all note types except AnkiOpsQA first (which is more specific),
-        then falls back to AnkiOpsQA as the generic catch-all.
-        """
-        # Check all note types except AnkiOpsQA first
-        for note_type, config in NOTE_TYPES.items():
-            if note_type == "AnkiOpsQA":
-                continue
-
-            required_fields = {
-                field_name
-                for field_name, _, is_required in config["field_mappings"]
-                if is_required
-            }
-
-            if required_fields.issubset(fields.keys()):
-                return note_type
-
-        # Fall back to AnkiOpsQA when both Question and Answer fields are present.
-        # Validation of required fields happens later in validate().
-        qa_fields = {"Question", "Answer"}
-        if qa_fields.issubset(fields.keys()):
-            return "AnkiOpsQA"
-
-        raise ValueError(
-            "Cannot determine note type from fields: " + ", ".join(fields.keys())
-        )
-
-    @staticmethod
-    def from_block(block: str) -> Note:
-        """Parse a raw markdown block into a Note."""
-        lines = block.strip().split("\n")
-        note_id: int | None = None
-        fields: dict[str, str] = {}
-        current_field: str | None = None
-        current_content: list[str] = []
-        in_code_block = False
-        seen: set[str] = set()
-
-        for line in lines:
-            stripped = line.lstrip()
-
-            # Track fenced code blocks to avoid detecting prefixes inside code
-            if _CODE_FENCE_PATTERN.match(stripped):
-                in_code_block = not in_code_block
-                if current_field:
-                    current_content.append(line)
-                continue
-
-            # Note ID comment
-            id_match = _NOTE_ID_PATTERN.match(line)
-            if id_match:
-                note_id = int(id_match.group(1))
-                continue
-
-            # Inside code blocks, don't detect field prefixes
-            if in_code_block:
-                if current_field:
-                    current_content.append(line)
-                continue
-
-            # Try to match a field prefix
-            matched_field = None
-            for prefix, field_name in ALL_PREFIX_TO_FIELD.items():
-                if line.startswith(prefix + " ") or line == prefix:
-                    # Duplicate field check
-                    if field_name in seen:
-                        ctx = f"in note_id: {note_id}" if note_id else "in this note"
-                        msg = (
-                            f"Duplicate field '{prefix}' {ctx}. "
-                            f"Did you forget to end the previous note with "
-                            f"'\\n\\n---\\n\\n' "
-                            f"or is there an accidental duplicate prefix?"
-                        )
-                        logger.error(msg)
-                        raise ValueError(msg)
-
-                    seen.add(field_name)
-                    if current_field:
-                        fields[current_field] = "\n".join(current_content).strip()
-
-                    matched_field = field_name
-                    current_content = (
-                        [line[len(prefix) + 1 :]]
-                        if line.startswith(prefix + " ")
-                        else []
-                    )
-                    current_field = field_name
-                    break
-
-            if matched_field is None and current_field:
-                current_content.append(line)
-
-        if current_field:
-            fields[current_field] = "\n".join(current_content).strip()
-
-        return Note(
-            note_id=note_id,
-            note_type=Note.infer_note_type(fields),
-            fields=fields,
-        )
-
-    # -- properties ---------------------------------------------------------
-
-    @property
-    def first_line(self) -> str:
-        """First content line of the note block (prefix + first line of content).
-
-        Used for text-based note_id insertion in ``_flush_writes`` and
-        for duplicate detection.  Reconstructed from parsed fields.
-        """
-        for field_name, content in self.fields.items():
-            prefix = _FIELD_TO_PREFIX.get(field_name, "")
-            first_content = content.split("\n")[0] if content else ""
-            if prefix and first_content:
-                return f"{prefix} {first_content}"
-            if prefix:
-                return prefix
-        return ""
-
-    @property
-    def identifier(self) -> str:
-        """Stable identifier for error messages."""
-        if self.note_id:
-            return f"note_id: {self.note_id}"
-        return f"'{self.first_line[:60]}...'"
-
-    # -- validation ---------------------------------------------------------
-
-    def validate(self) -> list[str]:
-        """Validate mandatory fields and note-type-specific rules.
-
-        Returns a list of error messages (empty if valid).
-        """
-        errors: list[str] = []
-        note_config = NOTE_TYPES.get(self.note_type)
-        if not note_config:
-            errors.append(f"Unknown note type '{self.note_type}'")
-            return errors
-
-        for field_name, prefix, mandatory in note_config["field_mappings"]:
-            if mandatory and not self.fields.get(field_name):
-                errors.append(f"Missing mandatory field '{field_name}' ({prefix})")
-
-        if self.note_type == "AnkiOpsCloze":
-            text = self.fields.get("Text", "")
-            if text and not _CLOZE_PATTERN.search(text):
-                errors.append(
-                    "AnkiOpsCloze note must contain cloze syntax "
-                    "(e.g. {{c1::answer}}) in the T: field"
-                )
-
-        if self.note_type == "AnkiOpsChoice":
-            errors.extend(self._validate_choice_answers())
-
-        return errors
-
-    def _validate_choice_answers(self) -> list[str]:
-        """Validate AnkiOpsChoice answer format and range."""
-        answer = self.fields.get("Answer", "")
-        if not answer:
-            return []
-
-        parts = [p.strip() for p in answer.split(",")]
-        try:
-            answer_ints = [int(p) for p in parts]
-        except ValueError:
-            return [
-                "AnkiOpsChoice answer (A:) must contain integers "
-                "(e.g. '1' for single choice or '1, 2, 3' for multiple choice)"
-            ]
-
-        max_choice = max(
-            (i for i in range(1, 9) if self.fields.get(f"Choice {i}")),
-            default=0,
-        )
-        for n in answer_ints:
-            if n < 1 or n > max_choice:
-                return [
-                    f"AnkiOpsChoice answer contains '{n}' but only "
-                    f"{max_choice} choice(s) are provided"
-                ]
-        return []
-
-    # -- conversion ---------------------------------------------------------
-
-    def to_html(self, converter) -> dict[str, str]:
-        """Convert all field values from markdown to HTML.
-
-        The returned dict contains an entry for every field defined by
-        this note type.  Fields absent from ``self.fields`` get an empty
-        string, so that Anki clears them when the user removes an
-        optional field from the markdown.
-
-        Args:
-            converter: MarkdownToHTML converter instance
-
-        Returns:
-            Dictionary mapping field names to HTML content.
-        """
-        html = {
-            name: converter.convert(content) for name, content in self.fields.items()
-        }
-
-        for field_name, _, _ in NOTE_TYPES.get(self.note_type, {}).get(
-            "field_mappings", []
-        ):
-            html.setdefault(field_name, "")
-
-        return html
-
-    # -- comparison ---------------------------------------------------------
-
-    def html_fields_match(
-        self, html_fields: dict[str, str], anki_note: AnkiNote
-    ) -> bool:
-        """Check if converted HTML fields match an AnkiNote's fields.
-
-        Args:
-            html_fields: Output of ``self.to_html(converter)``.
-            anki_note: The Anki-side note to compare against.
-
-        Returns:
-            True if no update is needed.
-        """
-        return all(anki_note.fields.get(k) == v for k, v in html_fields.items())
 
 
 # ---------------------------------------------------------------------------
@@ -473,6 +174,256 @@ class FileState:
 
 
 # ---------------------------------------------------------------------------
+# Note
+# ---------------------------------------------------------------------------
+
+
+@dataclass
+class Note:
+    """A note parsed from a markdown block.
+
+    Single class for all note types.  The ``note_type`` field (e.g.
+    ``"AnkiOpsQA"``, ``"AnkiOpsCloze"``) drives behaviour via config lookup.
+    """
+
+    note_id: int | None
+    note_type: str
+    fields: dict[str, str]  # {field_name: markdown_content}
+
+    # -- constructor --------------------------------------------------------
+
+    @staticmethod
+    def infer_note_type(fields: dict[str, str]) -> str:
+        """Infer note type from parsed fields based on required fields.
+
+        Checks all note types except AnkiOpsQA first (which is more specific),
+        then falls back to AnkiOpsQA as the generic catch-all.
+        """
+        # Check all note types except AnkiOpsQA first
+        for note_type, config in NOTE_TYPES.items():
+            if note_type == "AnkiOpsQA":
+                continue
+
+            required_fields = {
+                field_name
+                for field_name, _, is_required in config["field_mappings"]
+                if is_required
+            }
+
+            if required_fields.issubset(fields.keys()):
+                return note_type
+
+        # Fall back to AnkiOpsQA when both Question and Answer fields are present.
+        # Validation of required fields happens later in validate().
+        qa_fields = {"Question", "Answer"}
+        if qa_fields.issubset(fields.keys()):
+            return "AnkiOpsQA"
+
+        raise ValueError(
+            "Cannot determine note type from fields: " + ", ".join(fields.keys())
+        )
+
+    @staticmethod
+    def from_block(block: str) -> Note:
+        """Parse a raw markdown block into a Note."""
+        lines = block.strip().split("\n")
+        note_id: int | None = None
+        fields: dict[str, str] = {}
+        current_field: str | None = None
+        current_content: list[str] = []
+        in_code_block = False
+        seen: set[str] = set()
+
+        for line in lines:
+            stripped = line.lstrip()
+
+            # Track fenced code blocks to avoid detecting prefixes inside code
+            if _CODE_FENCE_PATTERN.match(stripped):
+                in_code_block = not in_code_block
+                if current_field:
+                    current_content.append(line)
+                continue
+
+            # Note ID comment
+            id_match = _NOTE_ID_PATTERN.match(line)
+            if id_match:
+                note_id = int(id_match.group(1))
+                continue
+
+            # Inside code blocks, don't detect field prefixes
+            if in_code_block:
+                if current_field:
+                    current_content.append(line)
+                continue
+
+            # Try to match a field prefix
+            matched_field = None
+            for prefix, field_name in PREFIX_TO_FIELD.items():
+                if line.startswith(prefix + " ") or line == prefix:
+                    # Duplicate field check
+                    if field_name in seen:
+                        ctx = f"in note_id: {note_id}" if note_id else "in this note"
+                        msg = (
+                            f"Duplicate field '{prefix}' {ctx}. "
+                            f"Did you forget to end the previous note with "
+                            f"'\\n\\n---\\n\\n' "
+                            f"or is there an accidental duplicate prefix?"
+                        )
+                        logger.error(msg)
+                        raise ValueError(msg)
+
+                    seen.add(field_name)
+                    if current_field:
+                        fields[current_field] = "\n".join(current_content).strip()
+
+                    matched_field = field_name
+                    current_content = (
+                        [line[len(prefix) + 1 :]]
+                        if line.startswith(prefix + " ")
+                        else []
+                    )
+                    current_field = field_name
+                    break
+
+            if matched_field is None and current_field:
+                current_content.append(line)
+
+        if current_field:
+            fields[current_field] = "\n".join(current_content).strip()
+
+        return Note(
+            note_id=note_id,
+            note_type=Note.infer_note_type(fields),
+            fields=fields,
+        )
+
+    # -- properties ---------------------------------------------------------
+
+    @property
+    def first_line(self) -> str:
+        """First content line of the note block (prefix + first line of content).
+
+        Used for text-based note_id insertion in ``_flush_writes`` and
+        for duplicate detection.  Reconstructed from parsed fields.
+        """
+        for field_name, content in self.fields.items():
+            prefix = FIELD_TO_PREFIX.get(field_name, "")
+            first_content = content.split("\n")[0] if content else ""
+            if prefix and first_content:
+                return f"{prefix} {first_content}"
+            if prefix:
+                return prefix
+        return ""
+
+    @property
+    def identifier(self) -> str:
+        """Stable identifier for error messages."""
+        if self.note_id:
+            return f"note_id: {self.note_id}"
+        return f"'{self.first_line[:60]}...'"
+
+    # -- validation ---------------------------------------------------------
+
+    def validate(self) -> list[str]:
+        """Validate mandatory fields and note-type-specific rules.
+
+        Returns a list of error messages (empty if valid).
+        """
+        errors: list[str] = []
+        note_config = NOTE_TYPES.get(self.note_type)
+        if not note_config:
+            errors.append(f"Unknown note type '{self.note_type}'")
+            return errors
+
+        for field_name, prefix, mandatory in note_config["field_mappings"]:
+            if mandatory and not self.fields.get(field_name):
+                errors.append(f"Missing mandatory field '{field_name}' ({prefix})")
+
+        if self.note_type == "AnkiOpsCloze":
+            text = self.fields.get("Text", "")
+            if text and not _CLOZE_PATTERN.search(text):
+                errors.append(
+                    "AnkiOpsCloze note must contain cloze syntax "
+                    "(e.g. {{c1::answer}}) in the T: field"
+                )
+
+        if self.note_type == "AnkiOpsChoice":
+            errors.extend(self._validate_choice_answers())
+
+        return errors
+
+    def _validate_choice_answers(self) -> list[str]:
+        """Validate AnkiOpsChoice answer format and range."""
+        answer = self.fields.get("Answer", "")
+        if not answer:
+            return []
+
+        parts = [p.strip() for p in answer.split(",")]
+        try:
+            answer_ints = [int(p) for p in parts]
+        except ValueError:
+            return [
+                "AnkiOpsChoice answer (A:) must contain integers "
+                "(e.g. '1' for single choice or '1, 2, 3' for multiple choice)"
+            ]
+
+        max_choice = max(
+            (i for i in range(1, 9) if self.fields.get(f"Choice {i}")),
+            default=0,
+        )
+        for n in answer_ints:
+            if n < 1 or n > max_choice:
+                return [
+                    f"AnkiOpsChoice answer contains '{n}' but only "
+                    f"{max_choice} choice(s) are provided"
+                ]
+        return []
+
+    # -- conversion ---------------------------------------------------------
+
+    def to_html(self, converter) -> dict[str, str]:
+        """Convert all field values from markdown to HTML.
+
+        The returned dict contains an entry for every field defined by
+        this note type.  Fields absent from ``self.fields`` get an empty
+        string, so that Anki clears them when the user removes an
+        optional field from the markdown.
+
+        Args:
+            converter: MarkdownToHTML converter instance
+
+        Returns:
+            Dictionary mapping field names to HTML content.
+        """
+        html = {
+            name: converter.convert(content) for name, content in self.fields.items()
+        }
+
+        for field_name, _, _ in NOTE_TYPES.get(self.note_type, {}).get(
+            "field_mappings", []
+        ):
+            html.setdefault(field_name, "")
+
+        return html
+
+    # -- comparison ---------------------------------------------------------
+
+    def html_fields_match(
+        self, html_fields: dict[str, str], anki_note: AnkiNote
+    ) -> bool:
+        """Check if converted HTML fields match an AnkiNote's fields.
+
+        Args:
+            html_fields: Output of ``self.to_html(converter)``.
+            anki_note: The Anki-side note to compare against.
+
+        Returns:
+            True if no update is needed.
+        """
+        return all(anki_note.fields.get(k) == v for k, v in html_fields.items())
+
+
+# ---------------------------------------------------------------------------
 # AnkiState
 # ---------------------------------------------------------------------------
 
@@ -534,3 +485,55 @@ class AnkiState:
             cards=cards,
             deck_note_ids=deck_note_ids,
         )
+
+
+# ---------------------------------------------------------------------------
+# AnkiNote
+# ---------------------------------------------------------------------------
+
+
+@dataclass
+class AnkiNote:
+    """A note as it exists in Anki (wrapping the raw AnkiConnect dict).
+
+    Provides typed access to note data instead of raw dict indexing.
+    """
+
+    note_id: int
+    note_type: str  # modelName
+    fields: dict[str, str]  # {field_name: value} (HTML content, extracted)
+    card_ids: list[int]
+
+    @staticmethod
+    def from_raw(raw_note: dict) -> AnkiNote:
+        """Create an AnkiNote from a raw AnkiConnect notesInfo dict.
+
+        Extracts fields from raw_note["fields"][field_name]["value"] structure.
+        """
+        return AnkiNote(
+            note_id=raw_note["noteId"],
+            note_type=raw_note.get("modelName", ""),
+            fields={name: data["value"] for name, data in raw_note["fields"].items()},
+            card_ids=raw_note.get("cards", []),
+        )
+
+    def to_markdown(self, converter) -> str:
+        """Format this Anki note as a markdown block.
+
+        Args:
+            converter: HTMLToMarkdown converter instance
+
+        Returns:
+            Markdown block string starting with ``<!-- note_id: ... -->``.
+        """
+        field_mappings = NOTE_TYPES[self.note_type]["field_mappings"]
+        lines = [f"<!-- note_id: {self.note_id} -->"]
+
+        for field_name, prefix, mandatory in field_mappings:
+            value = self.fields.get(field_name, "")
+            if value:
+                md = converter.convert(value)
+                if md or mandatory:
+                    lines.append(f"{prefix} {md}")
+
+        return "\n".join(lines)

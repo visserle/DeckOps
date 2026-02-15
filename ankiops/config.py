@@ -70,22 +70,6 @@ NOTE_TYPES = {
 
 SUPPORTED_NOTE_TYPES = list(NOTE_TYPES.keys())
 
-# Combined prefix-to-field mapping (for parsing any block type)
-ALL_PREFIX_TO_FIELD: dict[str, str] = {}
-for _cfg in NOTE_TYPES.values():
-    for _field_name, _prefix, _ in _cfg["field_mappings"]:
-        ALL_PREFIX_TO_FIELD[_prefix] = _field_name
-
-
-_WINDOWS_RESERVED = {
-    "CON",
-    "PRN",
-    "AUX",
-    "NUL",
-    *(f"COM{i}" for i in range(1, 10)),
-    *(f"LPT{i}" for i in range(1, 10)),
-}
-
 
 def sanitize_filename(deck_name: str) -> str:
     """Convert deck name to a safe filename (``::`` → ``__``).
@@ -100,7 +84,15 @@ def sanitize_filename(deck_name: str) -> str:
         )
 
     base = deck_name.split("::")[0].upper()
-    if base in _WINDOWS_RESERVED:
+    windows_reserved = {
+        "CON",
+        "PRN",
+        "AUX",
+        "NUL",
+        *(f"COM{i}" for i in range(1, 10)),
+        *(f"LPT{i}" for i in range(1, 10)),
+    }
+    if base in windows_reserved:
         raise ValueError(
             f"Deck name '{deck_name}' starts with Windows reserved name "
             f"'{base}'.\nPlease rename the deck in Anki."
