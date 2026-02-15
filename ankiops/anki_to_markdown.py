@@ -2,7 +2,7 @@
 
 Architecture:
   AnkiState   – all Anki-side data, fetched once (shared from anki_client)
-  FileState   – one existing markdown file, read once
+  FileState   – one existing markdown file, read once (from models)
   _sync_deck  – single engine: diff existing file vs Anki state, return new content
   export_collection – orchestrates: rename → sync → delete orphans (one pass)
 """
@@ -12,17 +12,10 @@ import re
 from dataclasses import dataclass
 from pathlib import Path
 
-from ankiops.anki_client import AnkiState
-from ankiops.config import NOTE_SEPARATOR, SUPPORTED_NOTE_TYPES
+from ankiops.config import NOTE_SEPARATOR, SUPPORTED_NOTE_TYPES, sanitize_filename
 from ankiops.html_converter import HTMLToMarkdown
 from ankiops.log import clickable_path, format_changes
-from ankiops.markdown_helpers import (
-    extract_deck_id,
-    extract_note_blocks,
-    format_note,
-    has_untracked_notes,
-    sanitize_filename,
-)
+from ankiops.models import AnkiState, FileState
 
 logger = logging.getLogger(__name__)
 
@@ -30,34 +23,6 @@ logger = logging.getLogger(__name__)
 # ---------------------------------------------------------------------------
 # Data classes
 # ---------------------------------------------------------------------------
-
-
-@dataclass
-class FileState:
-    """Existing markdown file content, read once."""
-
-    file_path: Path
-    raw_content: str
-    deck_id: int | None
-    existing_blocks: dict[str, str]  # "note_id: 123" -> block content
-    has_untracked: bool  # True if file has notes without note_id
-
-    @staticmethod
-    def from_file(file_path: Path) -> "FileState":
-        raw_content = file_path.read_text(encoding="utf-8")
-        deck_id, cards_content = extract_deck_id(raw_content)
-
-        # Parse cards_content only once for all operations
-        existing_blocks = extract_note_blocks(cards_content)
-        has_untracked = has_untracked_notes(cards_content)
-
-        return FileState(
-            file_path=file_path,
-            raw_content=raw_content,
-            deck_id=deck_id,
-            existing_blocks=existing_blocks,
-            has_untracked=has_untracked,
-        )
 
 
 @dataclass
@@ -102,13 +67,12 @@ def _format_blocks(
     block_by_id: dict[str, tuple[int, str]] = {}
 
     for nid in note_ids:
-        note = anki.notes.get(nid)
-        if not note:
+        anki_note = anki.notes.get(nid)
+        if not anki_note:
             continue
-        note_type = note.get("modelName", "")
-        if note_type not in SUPPORTED_NOTE_TYPES:
+        if anki_note.note_type not in SUPPORTED_NOTE_TYPES:
             continue
-        block = format_note(nid, note, converter, note_type=note_type)
+        block = anki_note.to_markdown(converter)
         match = re.match(r"<!--\s*(note_id:\s*\d+)\s*-->", block)
         if match:
             key = re.sub(r"\s+", " ", match.group(1))
@@ -327,7 +291,9 @@ def export_collection(
         expected_name = sanitize_filename(anki.id_to_deck_name[deck_id]) + ".md"
         if fs.file_path.name != expected_name:
             new_path = fs.file_path.parent / expected_name
-            logger.info(f"Renamed {clickable_path(fs.file_path)} -> {clickable_path(new_path)}")
+            logger.info(
+                f"Renamed {clickable_path(fs.file_path)} -> {clickable_path(new_path)}"
+            )
             fs.file_path.rename(new_path)
             # Update references to the new path
             del files_by_path[fs.file_path]
@@ -335,7 +301,7 @@ def export_collection(
                 file_path=new_path,
                 raw_content=fs.raw_content,
                 deck_id=fs.deck_id,
-                existing_blocks=fs.existing_blocks,
+                parsed_notes=fs.parsed_notes,
             )
             files_by_deck_id[deck_id] = fs
             files_by_path[new_path] = fs
@@ -422,7 +388,9 @@ def export_collection(
         # Delete files whose deck_id doesn't exist in Anki
         for deck_id, fs in files_by_deck_id.items():
             if deck_id not in anki_deck_ids:
-                logger.info(f"Deleted orphaned deck file {clickable_path(fs.file_path)}")
+                logger.info(
+                    f"Deleted orphaned deck file {clickable_path(fs.file_path)}"
+                )
                 fs.file_path.unlink()
                 deleted_deck_files += 1
 
@@ -432,7 +400,7 @@ def export_collection(
             content = md_file.read_text(encoding="utf-8")
             deck_id_match = re.match(r"(<!--\s*deck_id:\s*\d+\s*-->\n?)", content)
             deck_id_prefix = deck_id_match.group(1) if deck_id_match else ""
-            _, cards_content = extract_deck_id(content)
+            _, cards_content = FileState.extract_deck_id(content)
 
             blocks = cards_content.split(NOTE_SEPARATOR)
             kept: list[str] = []

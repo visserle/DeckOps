@@ -11,11 +11,7 @@ from pathlib import Path
 
 from ankiops.config import MARKER_FILE, NOTE_TYPES, get_collection_dir
 from ankiops.log import clickable_path
-from ankiops.markdown_helpers import (
-    extract_deck_id,
-    infer_note_type,
-    parse_note_block,
-)
+from ankiops.models import FileState, Note
 
 logger = logging.getLogger(__name__)
 
@@ -180,7 +176,7 @@ def serialize_collection_to_json(
         content = md_file.read_text()
 
         # Extract deck_id and remaining content
-        deck_id, remaining_content = extract_deck_id(content)
+        deck_id, remaining_content = FileState.extract_deck_id(content)
 
         # Split into note blocks
         note_blocks_raw = remaining_content.split("\n\n---\n\n")
@@ -201,7 +197,7 @@ def serialize_collection_to_json(
                 continue
 
             try:
-                parsed = parse_note_block(block_text)
+                parsed = Note.from_block(block_text)
 
                 # Convert to JSON-friendly format (note_type inferred from fields)
                 note_data = {"fields": parsed.fields}
@@ -442,7 +438,7 @@ def deserialize_collection_from_json(json_file: Path, overwrite: bool = False) -
 
             # Infer note type from fields
             try:
-                note_type = infer_note_type(fields)
+                note_type = Note.infer_note_type(fields)
             except ValueError as e:
                 logger.warning(
                     f"Cannot infer note type in deck '{deck_name}': {e}, skipping note"

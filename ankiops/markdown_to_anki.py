@@ -2,7 +2,7 @@
 
 Architecture:
   AnkiState   – all Anki-side data, fetched once (shared from anki_client)
-  FileState   – one markdown file, read once
+  FileState   – one markdown file, read once (from models)
   _sync_file  – single engine: classify → update → delete → create
   _flush_writes – deferred file I/O (one write per file, at the end)
 """
@@ -11,19 +11,10 @@ import logging
 from dataclasses import dataclass, field
 from pathlib import Path
 
-from ankiops.anki_client import AnkiState, invoke
+from ankiops.anki_client import invoke
 from ankiops.log import clickable_path, format_changes
 from ankiops.markdown_converter import MarkdownToHTML
-from ankiops.markdown_helpers import (
-    FileState,
-    InvalidID,
-    ParsedNote,
-    convert_fields_to_html,
-    extract_deck_id,
-    note_identifier,
-    validate_markdown_ids,
-    validate_note,
-)
+from ankiops.models import AnkiState, FileState, InvalidID, Note
 
 logger = logging.getLogger(__name__)
 
@@ -49,7 +40,7 @@ class _PendingWrite:
     file_path: Path
     raw_content: str
     deck_id_to_write: int | None
-    id_assignments: list[tuple[ParsedNote, int]]
+    id_assignments: list[tuple[Note, int]]
 
 
 @dataclass
@@ -80,22 +71,17 @@ class ImportSummary:
 # ---------------------------------------------------------------------------
 
 
-def _extract_fields(raw_note: dict) -> dict[str, str]:
-    """Extract {field_name: value} from a raw AnkiConnect note dict."""
-    return {name: data["value"] for name, data in raw_note["fields"].items()}
-
-
 def _validate_no_duplicate_first_lines(
     file_path: Path,
-    id_assignments: list[tuple[ParsedNote, int]],
+    id_assignments: list[tuple[Note, int]],
 ) -> None:
     """Raise if new notes share a first line (would break text-based ID insertion)."""
     first_lines: dict[str, list[str]] = {}
-    for parsed_note, _ in id_assignments:
-        if parsed_note.note_id is not None:
+    for note, _ in id_assignments:
+        if note.note_id is not None:
             continue
-        first_line = parsed_note.raw_content.strip().split("\n")[0]
-        first_lines.setdefault(first_line, []).append(note_identifier(parsed_note))
+        first_line = note.first_line
+        first_lines.setdefault(first_line, []).append(note.identifier)
 
     duplicates = {line: ids for line, ids in first_lines.items() if len(ids) > 1}
     if duplicates:
@@ -169,22 +155,21 @@ def _flush_writes(writes: list[_PendingWrite]) -> None:
 
         # 1. Insert or replace deck_id
         if w.deck_id_to_write is not None:
-            _, remaining = extract_deck_id(content)
+            _, remaining = FileState.extract_deck_id(content)
             content = f"<!-- deck_id: {w.deck_id_to_write} -->\n" + remaining
 
         # 2. Insert note_ids for new / stale notes
         if w.id_assignments:
             _validate_no_duplicate_first_lines(w.file_path, w.id_assignments)
 
-            for parsed_note, id_value in w.id_assignments:
+            for note, id_value in w.id_assignments:
                 new_id_comment = f"<!-- note_id: {id_value} -->"
-                if parsed_note.note_id is not None:
-                    old_id_comment = f"<!-- note_id: {parsed_note.note_id} -->"
+                if note.note_id is not None:
+                    old_id_comment = f"<!-- note_id: {note.note_id} -->"
                     content = content.replace(old_id_comment, new_id_comment, 1)
                 else:
-                    first_line = parsed_note.raw_content.strip().split("\n")[0]
                     content = content.replace(
-                        first_line, new_id_comment + "\n" + first_line, 1
+                        note.first_line, new_id_comment + "\n" + note.first_line, 1
                     )
 
         w.file_path.write_text(content, encoding="utf-8")
@@ -243,25 +228,23 @@ def _sync_file(
     )
 
     # ---- Phase 1: Classify + convert ----
-    existing: list[tuple[ParsedNote, dict[str, str]]] = []
-    new: list[tuple[ParsedNote, dict[str, str]]] = []
+    existing: list[tuple[Note, dict[str, str]]] = []
+    new: list[tuple[Note, dict[str, str]]] = []
 
     for note in fs.parsed_notes:
-        validation_errors = validate_note(note)
+        validation_errors = note.validate()
         if validation_errors:
             for err in validation_errors:
                 result.errors.append(
-                    f"Note {note.note_id or 'new'} ({note_identifier(note)}): {err}"
+                    f"Note {note.note_id or 'new'} ({note.identifier}): {err}"
                 )
             continue
 
         try:
-            html_fields = convert_fields_to_html(
-                note.fields, converter, note_type=note.note_type
-            )
+            html_fields = note.to_html(converter)
         except Exception as e:
             result.errors.append(
-                f"Note {note.note_id or 'new'} ({note_identifier(note)}): {e}"
+                f"Note {note.note_id or 'new'} ({note.identifier}): {e}"
             )
             continue
 
@@ -277,13 +260,13 @@ def _sync_file(
 
     # Safety check: note type mismatches
     for note, _ in existing:
-        raw = anki.notes.get(note.note_id)  # type: ignore[arg-type]
-        if raw and raw.get("modelName") != note.note_type:
+        anki_note = anki.notes.get(note.note_id)  # type: ignore[arg-type]
+        if anki_note and anki_note.note_type != note.note_type:
             raise ValueError(
                 f"Note type mismatch for note {note.note_id} "
-                f"({note_identifier(note)}): "
+                f"({note.identifier}): "
                 f"Markdown specifies '{note.note_type}' "
-                f"but Anki has '{raw.get('modelName')}'. "
+                f"but Anki has '{anki_note.note_type}'. "
                 f"AnkiConnect does not support changing note types. "
                 f"Please manually change the note type in Anki "
                 f"or delete the old note_id HTML tag to re-create the note."
@@ -292,10 +275,10 @@ def _sync_file(
     # Move cards that are in the wrong deck
     cards_to_move: list[int] = []
     for note, _ in existing:
-        raw = anki.notes.get(note.note_id)  # type: ignore[arg-type]
-        if not raw:
+        anki_note = anki.notes.get(note.note_id)  # type: ignore[arg-type]
+        if not anki_note:
             continue
-        for cid in raw.get("cards", []):
+        for cid in anki_note.card_ids:
             card = anki.cards.get(cid)
             if card and card.get("deckName") != deck_name:
                 cards_to_move.append(cid)
@@ -320,22 +303,21 @@ def _sync_file(
                 result.errors.append(f"Note {note.note_id}: failed to move deck: {e}")
 
     # Build update batch
-    stale: list[tuple[ParsedNote, dict[str, str]]] = []
+    stale: list[tuple[Note, dict[str, str]]] = []
     updates: list[dict] = []
-    update_notes: list[ParsedNote] = []
+    update_notes: list[Note] = []
 
     for note, html_fields in existing:
-        raw = anki.notes.get(note.note_id)  # type: ignore[arg-type]
-        if not raw or not raw.get("fields"):
+        anki_note = anki.notes.get(note.note_id)  # type: ignore[arg-type]
+        if not anki_note or not anki_note.fields:
             logger.debug(
-                f"Note {note.note_id} ({note_identifier(note)}) "
+                f"Note {note.note_id} ({note.identifier}) "
                 f"no longer in Anki, will re-create"
             )
             stale.append((note, html_fields))
             continue
 
-        anki_fields = _extract_fields(raw)
-        if all(anki_fields.get(k) == v for k, v in html_fields.items()):
+        if note.html_fields_match(html_fields, anki_note):
             result.skipped += 1
             continue
 
@@ -356,13 +338,11 @@ def _sync_file(
                 else:
                     result.errors.append(
                         f"Note {update_notes[i].note_id} "
-                        f"({note_identifier(update_notes[i])}): {res}"
+                        f"({update_notes[i].identifier}): {res}"
                     )
         except Exception as e:
             for note in update_notes:
-                result.errors.append(
-                    f"Note {note.note_id} ({note_identifier(note)}): {e}"
-                )
+                result.errors.append(f"Note {note.note_id} ({note.identifier}): {e}")
 
     new.extend(stale)
 
@@ -375,8 +355,8 @@ def _sync_file(
 
     if orphaned:
         for nid in orphaned:
-            raw = anki.notes.get(nid)
-            model = raw.get("modelName", "unknown") if raw else "unknown"
+            anki_note = anki.notes.get(nid)
+            model = anki_note.note_type if anki_note else "unknown"
             cids = [
                 cid
                 for cid, c in anki.cards.items()
@@ -392,7 +372,7 @@ def _sync_file(
         result.deleted += len(orphaned)
 
     # ---- Phase 4: Create new notes ----
-    id_assignments: list[tuple[ParsedNote, int]] = []
+    id_assignments: list[tuple[Note, int]] = []
 
     if new:
         create_actions = [
@@ -418,12 +398,10 @@ def _sync_file(
                     id_assignments.append((note, note_id))
                     result.created += 1
                 else:
-                    result.errors.append(
-                        f"Note new ({note_identifier(note)}): {note_id}"
-                    )
+                    result.errors.append(f"Note new ({note.identifier}): {note_id}")
         except Exception as e:
             for note, _ in new:
-                result.errors.append(f"Note new ({note_identifier(note)}): {e}")
+                result.errors.append(f"Note new ({note.identifier}): {e}")
 
     # ---- Phase 5: Return result + pending write ----
     pending = _PendingWrite(
@@ -450,7 +428,7 @@ def import_file(
     converter = MarkdownToHTML()
 
     # Check for invalid IDs and prompt user
-    invalid_ids = validate_markdown_ids(
+    invalid_ids = FileState.validate_ids(
         [fs],
         valid_deck_ids=set(anki.id_to_deck_name.keys()),
         valid_note_ids=set(anki.notes.keys()),
@@ -534,7 +512,7 @@ def import_collection(
     converter = MarkdownToHTML()
 
     # Phase 4: Validate IDs and prompt if needed
-    invalid_ids = validate_markdown_ids(
+    invalid_ids = FileState.validate_ids(
         file_states,
         valid_deck_ids=set(anki.id_to_deck_name.keys()),
         valid_note_ids=set(anki.notes.keys()),

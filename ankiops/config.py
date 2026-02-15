@@ -14,6 +14,13 @@ AUTO_COMMIT_DEFAULT = True
 
 NOTE_SEPARATOR = "\n\n---\n\n"  # changing the whitespace might lead to issues
 
+COMMON_FIELDS = [
+    ("Extra", "E:", False),
+    ("More", "M:", False),
+    ("Source", "S:", False),
+    ("AI Notes", "AI:", False),
+]
+
 # Each note type has a list of field mappings, where each mapping is a tuple of:
 # (field_name, prefix, required)
 NOTE_TYPES = {
@@ -21,31 +28,27 @@ NOTE_TYPES = {
         "field_mappings": [
             ("Question", "Q:", True),
             ("Answer", "A:", True),
-            ("Extra", "E:", False),
-            ("More", "M:", False),
+            *COMMON_FIELDS,
         ],
     },
     "AnkiOpsReversed": {
         "field_mappings": [
             ("Front", "F:", True),
             ("Back", "B:", True),
-            ("Extra", "E:", False),
-            ("More", "M:", False),
+            *COMMON_FIELDS,
         ],
     },
     "AnkiOpsCloze": {
         "field_mappings": [
             ("Text", "T:", True),
-            ("Extra", "E:", False),
-            ("More", "M:", False),
+            *COMMON_FIELDS,
         ],
     },
     "AnkiOpsInput": {
         "field_mappings": [
             ("Question", "Q:", True),
             ("Input", "I:", True),
-            ("Extra", "E:", False),
-            ("More", "M:", False),
+            *COMMON_FIELDS,
         ],
     },
     "AnkiOpsChoice": {
@@ -60,8 +63,7 @@ NOTE_TYPES = {
             ("Choice 7", "C7:", False),
             ("Choice 8", "C8:", False),
             ("Answer", "A:", True),
-            ("Extra", "E:", False),
-            ("More", "M:", False),
+            *COMMON_FIELDS,
         ],
     },
 }
@@ -73,6 +75,38 @@ ALL_PREFIX_TO_FIELD: dict[str, str] = {}
 for _cfg in NOTE_TYPES.values():
     for _field_name, _prefix, _ in _cfg["field_mappings"]:
         ALL_PREFIX_TO_FIELD[_prefix] = _field_name
+
+
+_WINDOWS_RESERVED = {
+    "CON",
+    "PRN",
+    "AUX",
+    "NUL",
+    *(f"COM{i}" for i in range(1, 10)),
+    *(f"LPT{i}" for i in range(1, 10)),
+}
+
+
+def sanitize_filename(deck_name: str) -> str:
+    """Convert deck name to a safe filename (``::`` → ``__``).
+
+    Raises ValueError for invalid characters or Windows reserved names.
+    """
+    invalid = [c for c in r'/\\?*|"<>' if c in deck_name and c != ":"]
+    if invalid:
+        raise ValueError(
+            f"Deck name '{deck_name}' contains invalid filename characters: "
+            f"{invalid}\nPlease rename the deck in Anki to remove these."
+        )
+
+    base = deck_name.split("::")[0].upper()
+    if base in _WINDOWS_RESERVED:
+        raise ValueError(
+            f"Deck name '{deck_name}' starts with Windows reserved name "
+            f"'{base}'.\nPlease rename the deck in Anki."
+        )
+
+    return deck_name.replace("::", "__")
 
 
 def _is_development_mode() -> bool:

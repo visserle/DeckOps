@@ -10,19 +10,19 @@ import pytest
 from ankiops.config import NOTE_TYPES
 from ankiops.html_converter import HTMLToMarkdown
 from ankiops.markdown_converter import MarkdownToHTML
-from ankiops.markdown_helpers import (
-    convert_fields_to_html,
-    format_note,
-    parse_note_block,
-)
-from ankiops.markdown_to_anki import _extract_fields
+from ankiops.models import AnkiNote, Note
 
 # -- helpers -----------------------------------------------------------------
 
 
-def _anki_note(fields: dict[str, str]) -> dict:
+def _anki_note_raw(fields: dict[str, str], note_type: str = "AnkiOpsQA") -> dict:
     """Build a raw AnkiConnect-style note dict from {name: value}."""
-    return {"fields": {k: {"value": v} for k, v in fields.items()}}
+    return {
+        "noteId": 1,
+        "modelName": note_type,
+        "fields": {k: {"value": v} for k, v in fields.items()},
+        "cards": [],
+    }
 
 
 def _complete_fields(note_type: str, html_fields: dict[str, str]) -> dict[str, str]:
@@ -36,8 +36,17 @@ def _complete_fields(note_type: str, html_fields: dict[str, str]) -> dict[str, s
 
 
 def _has_changes(anki_fields: dict[str, str], complete: dict[str, str]) -> bool:
-    """Return True if the markdown-derived fields differ from Anki."""
-    return not all(anki_fields.get(k) == v for k, v in complete.items())
+    """Return True if the markdown-derived fields differ from Anki.
+
+    In real Anki, notes always have ALL fields for their note type
+    (empty string if unset).  Test fixtures may omit empty fields, so
+    a missing key in *anki_fields* is treated as ``""``.
+    """
+    for k, v in complete.items():
+        anki_val = anki_fields.get(k, "")
+        if anki_val != v:
+            return True
+    return False
 
 
 def _roundtrip(anki_fields: dict[str, str], note_type: str) -> dict[str, str]:
@@ -45,10 +54,11 @@ def _roundtrip(anki_fields: dict[str, str], note_type: str) -> dict[str, str]:
     html_to_md = HTMLToMarkdown()
     md_to_html = MarkdownToHTML()
 
-    raw = _anki_note(anki_fields)
-    md_text = format_note(1, raw, html_to_md, note_type=note_type)
-    parsed = parse_note_block(md_text)
-    html_fields = convert_fields_to_html(parsed.fields, md_to_html)
+    raw = _anki_note_raw(anki_fields, note_type)
+    anki_note = AnkiNote.from_raw(raw)
+    md_text = anki_note.to_markdown(html_to_md)
+    parsed = Note.from_block(md_text)
+    html_fields = parsed.to_html(md_to_html)
     return _complete_fields(note_type, html_fields)
 
 
@@ -195,11 +205,17 @@ class TestRoundTripWithEdits:
 
     def test_remove_extra_field_from_exported_markdown(self, html_to_md, md_to_html):
         """The exact bug scenario: export note with Extra, remove it, re-import."""
-        anki = {"Question": "What?", "Answer": "This", "Extra": "Info", "More": ""}
-        raw = _anki_note(anki)
+        anki_fields = {
+            "Question": "What?",
+            "Answer": "This",
+            "Extra": "Info",
+            "More": "",
+        }
+        raw = _anki_note_raw(anki_fields)
+        anki_note = AnkiNote.from_raw(raw)
 
         # Export
-        md_text = format_note(1, raw, html_to_md, note_type="AnkiOpsQA")
+        md_text = anki_note.to_markdown(html_to_md)
         assert "E: Info" in md_text
 
         # User removes the E: line
@@ -208,44 +224,46 @@ class TestRoundTripWithEdits:
         assert "E:" not in edited_md
 
         # Re-import
-        parsed = parse_note_block(edited_md)
+        parsed = Note.from_block(edited_md)
         assert "Extra" not in parsed.fields
 
-        html_fields = convert_fields_to_html(parsed.fields, md_to_html)
+        html_fields = parsed.to_html(md_to_html)
         complete = _complete_fields("AnkiOpsQA", html_fields)
 
         assert complete["Extra"] == ""
-        assert _has_changes(anki, complete)
+        assert _has_changes(anki_fields, complete)
 
     def test_add_extra_field_to_exported_markdown(self, html_to_md, md_to_html):
         """Export note without Extra, add it, re-import."""
-        anki = {"Question": "What?", "Answer": "This", "Extra": "", "More": ""}
-        raw = _anki_note(anki)
+        anki_fields = {"Question": "What?", "Answer": "This", "Extra": "", "More": ""}
+        raw = _anki_note_raw(anki_fields)
+        anki_note = AnkiNote.from_raw(raw)
 
-        md_text = format_note(1, raw, html_to_md, note_type="AnkiOpsQA")
+        md_text = anki_note.to_markdown(html_to_md)
         assert "E:" not in md_text
 
         # User adds an Extra line
         edited_md = md_text + "\nE: New extra"
-        parsed = parse_note_block(edited_md)
-        html_fields = convert_fields_to_html(parsed.fields, md_to_html)
+        parsed = Note.from_block(edited_md)
+        html_fields = parsed.to_html(md_to_html)
         complete = _complete_fields("AnkiOpsQA", html_fields)
 
         assert "New extra" in complete["Extra"]
-        assert _has_changes(anki, complete)
+        assert _has_changes(anki_fields, complete)
 
     def test_edit_answer_field(self, html_to_md, md_to_html):
-        anki = {"Question": "What?", "Answer": "This", "Extra": "", "More": ""}
-        raw = _anki_note(anki)
+        anki_fields = {"Question": "What?", "Answer": "This", "Extra": "", "More": ""}
+        raw = _anki_note_raw(anki_fields)
+        anki_note = AnkiNote.from_raw(raw)
 
-        md_text = format_note(1, raw, html_to_md, note_type="AnkiOpsQA")
+        md_text = anki_note.to_markdown(html_to_md)
         edited_md = md_text.replace("A: This", "A: That")
 
-        parsed = parse_note_block(edited_md)
-        html_fields = convert_fields_to_html(parsed.fields, md_to_html)
+        parsed = Note.from_block(edited_md)
+        html_fields = parsed.to_html(md_to_html)
         complete = _complete_fields("AnkiOpsQA", html_fields)
 
-        assert _has_changes(anki, complete)
+        assert _has_changes(anki_fields, complete)
 
     def test_no_edit_no_change(self, html_to_md, md_to_html):
         """Unmodified export should not trigger a change."""
@@ -254,19 +272,26 @@ class TestRoundTripWithEdits:
         assert not _has_changes(anki, complete)
 
 
-# -- tests: _extract_fields --------------------------------------------------
+# -- tests: AnkiNote.from_raw -----------------------------------------------
 
 
-class TestExtractFields:
-    """Verify the Anki raw-note field extraction."""
+class TestAnkiNoteFromRaw:
+    """Verify the AnkiNote field extraction."""
 
     def test_extracts_all_fields(self):
-        raw = _anki_note({"Question": "Q", "Answer": "A", "Extra": "E", "More": ""})
-        result = _extract_fields(raw)
-        assert result == {"Question": "Q", "Answer": "A", "Extra": "E", "More": ""}
+        raw = _anki_note_raw({"Question": "Q", "Answer": "A", "Extra": "E", "More": ""})
+        anki_note = AnkiNote.from_raw(raw)
+        assert anki_note.fields == {
+            "Question": "Q",
+            "Answer": "A",
+            "Extra": "E",
+            "More": "",
+        }
 
     def test_empty_fields_preserved(self):
-        raw = _anki_note({"Text": "T", "Extra": "", "More": ""})
-        result = _extract_fields(raw)
-        assert result["Extra"] == ""
-        assert result["More"] == ""
+        raw = _anki_note_raw(
+            {"Text": "T", "Extra": "", "More": ""}, note_type="AnkiOpsCloze"
+        )
+        anki_note = AnkiNote.from_raw(raw)
+        assert anki_note.fields["Extra"] == ""
+        assert anki_note.fields["More"] == ""
