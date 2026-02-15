@@ -4,7 +4,7 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "ankiops"
-version = "0.3.1"
+version = "0.4.0"
 description = "Anki decks ↔ Markdown files, in perfect sync"
 readme = "README.md"
 requires-python = ">=3.10"
@@ -42,7 +42,7 @@ where = ["."]
 include = ["ankiops*"]
 
 [tool.setuptools.package-data]
-ankiops = ["data/*.md", "models/*.anki", "models/*.css"]
+ankiops = ["data/*.md", "card_templates/*.anki", "card_templates/*.css"]
 
 [tool.ruff]
 line-length = 88
