@@ -56,6 +56,8 @@ Yes, AnkiOps will never modify notes with non-AnkiOps note types. Your existing 
 Create a new Markdown file in your initialized AnkiOps folder. For the first import, the file name will act as the deck name. Subdecks are supported via two underscores `__` (Anki's `::` is not supported in the file system). Start by writing your notes in Markdown. For each note, you can decide whether to use the QA or cloze format. Notes must be separated by a new line, three dashes `---`, and another new line. You can add new notes anywhere in an existing file.
 
 ```markdown
+<!-- deck_id: 123456789 -->
+<!-- note_id: 123487556 -->
 Q: Question text here
 A: Answer text here
 E: Extra information (optional)
@@ -63,6 +65,7 @@ M: Content behind a "more" button (optional)
 
 ---
 
+<!-- note_id: 123474567 -->
 T: Text with {{c1::multiple}} {{c2::cloze deletions}}.
 E: ![image with set width](im.png){width=700}
 
@@ -79,7 +82,9 @@ A: 1,3
 And so on…
 ```
 
-Each note type is identified by its field prefixes. `E:` (Extra) and `M:` (More) are optional fields shared across all note types.
+For the last note in the example, a `note_id` will be assigned with the first import.
+
+Each note type is identified by its field prefixes. `E:` (Extra) and `M:` (More, revealed on click) are optional fields shared across all note types.
 
 | Note Type | Fields |
 |---|---|
@@ -103,7 +108,9 @@ We recommend using VS Code. It has excellent AI integration, a great [add-on](ht
 
 ### How can I share my AnkiOps collection?
 
-Use `ankiops serialize --no-ids` to export your local AnkiOps collection to a clean JSON file without profile-specific IDs. Add `--include-media` to bundle media files from the Anki media folder into a ZIP archive. Recipients can import either format with `ankiops deserialize <file>`, which creates a new local AnkiOps directory on their machine, and imports media to their Anki folder with smart conflict resolution. Alternatively, you could share your collection using the native Anki export (`.apkg`), or by sharing your plain Markdown files along with the `media/AnkiOpsMedia` folder. Make sure to remove all ID tags from your Markdown files first, as they are profile-specific.
+Use `ankiops serialize --no-ids` to export your local AnkiOps collection to a clean JSON file without profile-specific IDs. Add `--include-media` to bundle media files from the Anki media folder into a ZIP archive. Recipients can import either format with `ankiops deserialize <file>`, which creates a new local AnkiOps directory on their machine, and imports media to their Anki folder with smart conflict resolution. 
+
+Alternatively, you could share your collection using the native Anki export (`.apkg`), or by sharing your plain Markdown files along with the `media/AnkiOpsMedia` folder. Make sure to remove all ID tags from your Markdown files first, as they are profile-specific.
 
 ### How can I migrate my existing notes into AnkiOps?
 
